@@ -1,15 +1,103 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// schema.prisma
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
+  output   = "./prisma/generated"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int             @id @default(autoincrement())
+  phone          String          @unique
+  macAddress     String?         @unique
+  status         UserStatus      @default(ACTIVE)
+  subscriptions  Subscription[]
+  routerSessions RouterSession[]
+  payments       Payment[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Plan {
+  id            Int            @id @default(autoincrement())
+  name          String
+  description   String?
+  durationType  DurationType // hour, day, week, month
+  durationValue Int // e.g. 1, 6, 30
+  price         Float
+  subscriptions Subscription[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Subscription {
+  id        Int                @id @default(autoincrement())
+  userId    Int
+  planId    Int
+  startTime DateTime           @default(now())
+  endTime   DateTime
+  status    SubscriptionStatus @default(ACTIVE)
+  paymentId Int?
+  user      User               @relation(fields: [userId], references: [id])
+  plan      Plan               @relation(fields: [planId], references: [id])
+  payment   Payment?           @relation(fields: [paymentId], references: [id])
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+model Payment {
+  id              Int            @id @default(autoincrement())
+  userId          Int
+  amount          Float
+  method          PaymentMethod  @default(MPESA)
+  mpesaCode       String?        @unique
+  status          PaymentStatus  @default(PENDING)
+  transactionDate DateTime       @default(now())
+  callbackData    Json?
+  user            User           @relation(fields: [userId], references: [id])
+  subscription    Subscription[]
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum DurationType {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum PaymentMethod {
+  MPESA
+  CASH
+  CARD
+}
+
+model RouterSession {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  macAddress String
+  ipAddress  String?
+  loginTime  DateTime  @default(now())
+  logoutTime DateTime?
+  duration   Int? // in minutes
+  user       User      @relation(fields: [userId], references: [id])
 }
