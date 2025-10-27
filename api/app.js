@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import planRoutes from "./routes/planroute.js"
 import userRoutes from "./routes/user.js";
 // import paymentRoutes from "./routes/paymentRoutes.js";
-// import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import subscriptionRoutes from "./routes/subscription.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 dotenv.config();
@@ -18,7 +18,7 @@ app.use(express.json());
 app.use("/api/plans", planRoutes);
 app.use("/api/users", userRoutes);
 // app.use("/api/payments", paymentRoutes);
-// app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 
 // Error handler
 app.use(errorHandler);
