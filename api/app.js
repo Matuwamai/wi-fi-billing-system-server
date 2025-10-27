@@ -2,9 +2,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import planRoutes from "./routes/planRoutes.js";
-import paymentRoutes from "./routes/paymentRoutes.js";
-import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import planRoutes from "./routes/planroute.js"
+// import paymentRoutes from "./routes/paymentRoutes.js";
+// import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 dotenv.config();
@@ -15,8 +15,8 @@ app.use(express.json());
 
 // Routes
 app.use("/api/plans", planRoutes);
-app.use("/api/payments", paymentRoutes);
-app.use("/api/subscriptions", subscriptionRoutes);
+// app.use("/api/payments", paymentRoutes);
+// app.use("/api/subscriptions", subscriptionRoutes);
 
 // Error handler
 app.use(errorHandler);
