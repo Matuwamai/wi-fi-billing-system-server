@@ -1,6 +1,5 @@
 import cron from "node-cron";
 import prisma from "../config/db.js";
-
 /**
  * Auto-expire subscriptions whose endTime has passed
  */

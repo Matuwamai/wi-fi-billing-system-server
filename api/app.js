@@ -7,6 +7,7 @@ import userRoutes from "./routes/user.js";
 // import paymentRoutes from "./routes/paymentRoutes.js";
 import subscriptionRoutes from "./routes/subscription.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
+import mpeasaRoutes from "./routes/mpesa.js";
 
 dotenv.config();
 const app = express();
@@ -19,6 +20,7 @@ app.use("/api/plans", planRoutes);
 app.use("/api/users", userRoutes);
 // app.use("/api/payments", paymentRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/mpesa", mpeasaRoutes);
 
 // Error handler
 app.use(errorHandler);
