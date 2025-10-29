@@ -50,16 +50,18 @@ model Subscription {
 }
 
 model Payment {
-  id              Int            @id @default(autoincrement())
-  userId          Int
-  amount          Float
-  method          PaymentMethod  @default(MPESA)
-  mpesaCode       String?        @unique
-  status          PaymentStatus  @default(PENDING)
-  transactionDate DateTime       @default(now())
-  callbackData    Json?
-  user            User           @relation(fields: [userId], references: [id])
-  subscription    Subscription[]
+  id                Int            @id @default(autoincrement())
+  userId            Int
+  amount            Float
+  method            PaymentMethod  @default(MPESA)
+  mpesaCode         String?        @unique
+  status            PaymentStatus  @default(PENDING)
+  transactionDate   DateTime       @default(now())
+  callbackData      Json?
+  checkoutRequestId String?        @unique
+  merchantRequestId String?        @unique
+  user              User           @relation(fields: [userId], references: [id])
+  subscription      Subscription[]
 }
 
 enum UserStatus {
