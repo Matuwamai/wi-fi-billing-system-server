@@ -1,18 +1,28 @@
 import { initiateStkPush } from "../services/mpesaService.js";
 import prisma from "../config/db.js";
+import { createSubscriptionForPayment } from "../services/subscriptionService.js";
 
 export const startPayment = async (req, res) => {
   try {
-    const { phone, amount, userId } = req.body;
+    const { phone, userId , planId} = req.body;
 
-    if (!phone || !amount || !userId)
+    if (!phone  || !userId || !planId)
       return res.status(400).json({ message: "Missing required fields" });
+    // Fetch the plan details
+    const plan = await prisma.plan.findUnique({
+      where: { id: planId },
+    });
 
-    // Create payment record
+    if (!plan) {
+      return res.status(404).json({ message: "Plan not found" });
+    }
+    const amount = plan.price;
+    // Create initial payment record
     const payment = await prisma.payment.create({
       data: {
         userId,
         amount,
+        planId,
         method: "MPESA",
         status: "PENDING",
       },
@@ -25,6 +35,15 @@ export const startPayment = async (req, res) => {
       accountRef: `WIFI-${payment.id}`,
     });
 
+    // 🧠 Save the returned IDs to match during callback
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        checkoutRequestId: stkResponse?.CheckoutRequestID || null,
+        merchantRequestId: stkResponse?.MerchantRequestID || null,
+      },
+    });
+
     res.status(200).json({
       message: "STK push initiated",
       payment,
@@ -35,6 +54,8 @@ export const startPayment = async (req, res) => {
     res.status(500).json({ message: "STK push failed", error: error.message });
   }
 };
+
+
 export const handleCallback = async (req, res) => {
   try {
     const { Body } = req.body;
@@ -44,25 +65,22 @@ export const handleCallback = async (req, res) => {
     const { CheckoutRequestID, ResultCode } = callback;
     const result = ResultCode === 0 ? "SUCCESS" : "FAILED";
 
-    // Extract metadata safely
     const metadataItems = callback?.CallbackMetadata?.Item || [];
     const mpesaCode = metadataItems.find(i => i.Name === "MpesaReceiptNumber")?.Value || null;
     const amount = metadataItems.find(i => i.Name === "Amount")?.Value || null;
     const phone = metadataItems.find(i => i.Name === "PhoneNumber")?.Value || null;
 
-    // Find the exact payment by CheckoutRequestID
     const payment = await prisma.payment.findUnique({
       where: { checkoutRequestId: CheckoutRequestID },
     });
 
     if (!payment) {
       console.warn("Payment not found for CheckoutRequestID:", CheckoutRequestID);
-      // Optionally: try fallback matching (user+amount+pending) or log for manual handling
       return res.status(200).json({ message: "No matching payment found" });
     }
 
-    // Update only the found payment
-    await prisma.payment.update({
+    // Update payment status
+    const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
       data: {
         status: result,
@@ -71,8 +89,10 @@ export const handleCallback = async (req, res) => {
       },
     });
 
-    // Optionally: create subscription here if result === "SUCCESS"
-    // await createSubscriptionForPayment(payment, ...)
+    // 🚀 Auto-create subscription after successful payment
+    if (result === "SUCCESS") {
+      await createSubscriptionForPayment(updatedPayment);
+    }
 
     res.sendStatus(200);
   } catch (error) {
@@ -80,5 +100,6 @@ export const handleCallback = async (req, res) => {
     res.sendStatus(500);
   }
 };
+
 
 

@@ -29,6 +29,7 @@ model Plan {
   durationType  DurationType // hour, day, week, month
   durationValue Int // e.g. 1, 6, 30
   price         Float
+  paments       Payment[]
   subscriptions Subscription[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -60,6 +61,8 @@ model Payment {
   callbackData      Json?
   checkoutRequestId String?        @unique
   merchantRequestId String?        @unique
+  planId            Int?
+  plan              Plan?          @relation(fields: [planId], references: [id])
   user              User           @relation(fields: [userId], references: [id])
   subscription      Subscription[]
 }
