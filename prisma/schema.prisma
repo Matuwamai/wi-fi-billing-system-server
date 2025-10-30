@@ -55,7 +55,7 @@ model Payment {
   userId            Int
   amount            Float
   method            PaymentMethod  @default(MPESA)
-  mpesaCode         String?        @unique
+  mpesaCode         String?        @unique(map: "Payment_mpesaCode_key") @db.VarChar(50)
   status            PaymentStatus  @default(PENDING)
   transactionDate   DateTime       @default(now())
   callbackData      Json?

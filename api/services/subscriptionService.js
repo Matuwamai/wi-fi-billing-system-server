@@ -57,5 +57,7 @@ export const createSubscriptionForPayment = async (payment) => {
     },
   });
 
-  console.log(`✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`);
+  console.log(
+    `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
+  );
 };

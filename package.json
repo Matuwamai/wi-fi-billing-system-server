@@ -21,6 +21,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
+    "mikronode": "^2.3.11",
     "node-cron": "^4.2.1",
     "node-routeros": "^1.6.8",
     "nodemon": "^3.1.10"

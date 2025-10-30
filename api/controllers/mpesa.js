@@ -4,9 +4,9 @@ import { createSubscriptionForPayment } from "../services/subscriptionService.js
 
 export const startPayment = async (req, res) => {
   try {
-    const { phone, userId , planId} = req.body;
+    const { phone, userId, planId } = req.body;
 
-    if (!phone  || !userId || !planId)
+    if (!phone || !userId || !planId)
       return res.status(400).json({ message: "Missing required fields" });
     // Fetch the plan details
     const plan = await prisma.plan.findUnique({
@@ -55,7 +55,6 @@ export const startPayment = async (req, res) => {
   }
 };
 
-
 export const handleCallback = async (req, res) => {
   try {
     const { Body } = req.body;
@@ -66,16 +65,22 @@ export const handleCallback = async (req, res) => {
     const result = ResultCode === 0 ? "SUCCESS" : "FAILED";
 
     const metadataItems = callback?.CallbackMetadata?.Item || [];
-    const mpesaCode = metadataItems.find(i => i.Name === "MpesaReceiptNumber")?.Value || null;
-    const amount = metadataItems.find(i => i.Name === "Amount")?.Value || null;
-    const phone = metadataItems.find(i => i.Name === "PhoneNumber")?.Value || null;
+    const mpesaCode =
+      metadataItems.find((i) => i.Name === "MpesaReceiptNumber")?.Value || null;
+    const amount =
+      metadataItems.find((i) => i.Name === "Amount")?.Value || null;
+    const phone =
+      metadataItems.find((i) => i.Name === "PhoneNumber")?.Value || null;
 
     const payment = await prisma.payment.findUnique({
       where: { checkoutRequestId: CheckoutRequestID },
     });
 
     if (!payment) {
-      console.warn("Payment not found for CheckoutRequestID:", CheckoutRequestID);
+      console.warn(
+        "Payment not found for CheckoutRequestID:",
+        CheckoutRequestID
+      );
       return res.status(200).json({ message: "No matching payment found" });
     }
 
@@ -92,14 +97,17 @@ export const handleCallback = async (req, res) => {
     // 🚀 Auto-create subscription after successful payment
     if (result === "SUCCESS") {
       await createSubscriptionForPayment(updatedPayment);
-    }
+      const plan = await prisma.plan.findUnique({
+        where: { id: payment.planId },
+      });
 
+      console.log(
+        `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
+      );
+    }
     res.sendStatus(200);
   } catch (error) {
     console.error("Callback error:", error);
     res.sendStatus(500);
   }
 };
-
-
-

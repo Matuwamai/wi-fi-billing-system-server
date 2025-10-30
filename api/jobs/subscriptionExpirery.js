@@ -1,8 +1,10 @@
 import cron from "node-cron";
 import prisma from "../config/db.js";
+import { autoExpireSessions } from "../controllers/routerSession.js";
 /**
  * Auto-expire subscriptions whose endTime has passed
  */
+
 const subscriptionExpiryJob = () => {
   // Runs every 5 minutes
   cron.schedule("*/5 * * * *", async () => {
@@ -31,6 +33,10 @@ const subscriptionExpiryJob = () => {
       } else {
         console.log("⏳ No expired subscriptions found.");
       }
+      cron.schedule("*/5 * * * *", async () => {
+        console.log("🔁 Checking for expired sessions...");
+        await autoExpireSessions();
+      });
     } catch (error) {
       console.error("❌ Error running subscription expiry job:", error.message);
     }
