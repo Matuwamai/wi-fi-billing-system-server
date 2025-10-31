@@ -1,7 +1,7 @@
 import MikroNode from "mikronode-ng";
 import prisma from "../config/db.js";
 
-// 🧠 Router connection credentials
+// Router connection credentials
 const routerConfig = {
   host: process.env.MIKROTIK_HOST,
   user: process.env.MIKROTIK_USER,
@@ -51,6 +51,48 @@ export const createRouterSession = async ({
           });
           chan.close();
           conn.close();
+          resolve(true);
+        });
+
+        chan.on("trap", (err) => reject(err));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+};
+export const disableRouterSession = async (routerSession) => {
+  const user = await prisma.user.findUnique({
+    where: { id: routerSession.userId },
+  });
+
+  if (!user) throw new Error("User not found for router session");
+
+  const connection = MikroNode.getConnection(
+    routerConfig.host,
+    routerConfig.user,
+    routerConfig.password
+  );
+
+  return new Promise((resolve, reject) => {
+    connection.connect(async (conn) => {
+      try {
+        const chan = conn.openChannel("remove-user");
+
+        // Remove user from MikroTik Hotspot
+        chan.write(`/ip/hotspot/user/remove`, [`=numbers=${user.username}`]);
+
+        chan.on("done", async () => {
+          await prisma.routerSession.update({
+            where: { id: routerSession.id },
+            data: {
+              status: "INACTIVE",
+              endedAt: new Date(),
+            },
+          });
+          chan.close();
+          conn.close();
+          console.log(`🚫 Disabled router session for user: ${user.username}`);
           resolve(true);
         });
 
