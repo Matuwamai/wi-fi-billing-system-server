@@ -56,7 +56,11 @@ export const createSubscriptionForPayment = async (payment) => {
       status: "ACTIVE",
     },
   });
-
+  await createRouterSession({
+    userId: payment.userId,
+    planId: payment.planId,
+    subscriptionId: subscription.id,
+  });
   console.log(
     `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
   );

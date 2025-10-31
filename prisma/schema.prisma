@@ -23,7 +23,7 @@ model User {
 }
 
 model Plan {
-  id            Int            @id @default(autoincrement())
+  id            Int             @id @default(autoincrement())
   name          String
   description   String?
   durationType  DurationType // hour, day, week, month
@@ -31,23 +31,25 @@ model Plan {
   price         Float
   paments       Payment[]
   subscriptions Subscription[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  RouterSession RouterSession[]
 }
 
 model Subscription {
-  id        Int                @id @default(autoincrement())
-  userId    Int
-  planId    Int
-  startTime DateTime           @default(now())
-  endTime   DateTime
-  status    SubscriptionStatus @default(ACTIVE)
-  paymentId Int?
-  user      User               @relation(fields: [userId], references: [id])
-  plan      Plan               @relation(fields: [planId], references: [id])
-  payment   Payment?           @relation(fields: [paymentId], references: [id])
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
+  id            Int                @id @default(autoincrement())
+  userId        Int
+  planId        Int
+  startTime     DateTime           @default(now())
+  endTime       DateTime
+  status        SubscriptionStatus @default(ACTIVE)
+  paymentId     Int?
+  user          User               @relation(fields: [userId], references: [id])
+  plan          Plan               @relation(fields: [planId], references: [id])
+  payment       Payment?           @relation(fields: [paymentId], references: [id])
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  RouterSession RouterSession[]
 }
 
 model Payment {
@@ -65,6 +67,21 @@ model Payment {
   plan              Plan?          @relation(fields: [planId], references: [id])
   user              User           @relation(fields: [userId], references: [id])
   subscription      Subscription[]
+}
+
+model RouterSession {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  planId         Int
+  subscriptionId Int
+  status         String       @default("ACTIVE")
+  startedAt      DateTime     @default(now())
+  endedAt        DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User         @relation(fields: [userId], references: [id])
+  plan           Plan         @relation(fields: [planId], references: [id])
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
 }
 
 enum UserStatus {
@@ -95,15 +112,4 @@ enum PaymentMethod {
   MPESA
   CASH
   CARD
-}
-
-model RouterSession {
-  id         Int       @id @default(autoincrement())
-  userId     Int
-  macAddress String
-  ipAddress  String?
-  loginTime  DateTime  @default(now())
-  logoutTime DateTime?
-  duration   Int? // in minutes
-  user       User      @relation(fields: [userId], references: [id])
 }
