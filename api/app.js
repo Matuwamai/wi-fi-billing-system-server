@@ -2,14 +2,12 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import planRoutes from "./routes/planroute.js"
+import planRoutes from "./routes/planroute.js";
 import userRoutes from "./routes/user.js";
 import subscriptionRoutes from "./routes/subscription.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import mpeasaRoutes from "./routes/mpesa.js";
 import routerSessionRoutes from "./routes/routerSession.js";
-
-
 
 dotenv.config();
 const app = express();
