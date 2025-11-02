@@ -14,6 +14,9 @@ model User {
   phone          String          @unique
   macAddress     String?         @unique
   password       String?
+  deviceName     String?
+  deviceId       String?         @unique
+  isGuest        Boolean         @default(false)
   status         UserStatus      @default(ACTIVE)
   subscriptions  Subscription[]
   routerSessions RouterSession[]
