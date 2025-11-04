@@ -1,16 +1,17 @@
-// api/routes/userRoute.js
 import express from "express";
 import {
   registerUser,
   loginUser,
   getProfile,
-} from "../controllers/user.js";
-import { authenticate } from "../middlewares/auth.js";
+  createGuestUser,
+} from "../controllers/authController.js";
+import authMiddleware from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
 router.post("/register", registerUser);
 router.post("/login", loginUser);
-router.get("/me", authenticate, getProfile);
+router.post("/guest", createGuestUser); // 👈 new route
+router.get("/me", authMiddleware, getProfile);
 
 export default router;
