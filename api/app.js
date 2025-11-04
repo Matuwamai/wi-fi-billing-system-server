@@ -23,7 +23,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/api/plans", planRoutes);
-app.use("/api/users", userRoutes);
+app.use("/api/user", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/session", routerSessionRoutes);
 app.use("/api/mpesa", mpeasaRoutes);

@@ -4,14 +4,14 @@ import {
   loginUser,
   getProfile,
   createGuestUser,
-} from "../controllers/authController.js";
-import authMiddleware from "../middlewares/authMiddleware.js";
+} from "../controllers/user.js";
+import { authenticate } from "../middlewares/auth.js";
 
 const router = express.Router();
 
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.post("/guest", createGuestUser); // 👈 new route
-router.get("/me", authMiddleware, getProfile);
+router.get("/me", authenticate, getProfile);
 
 export default router;

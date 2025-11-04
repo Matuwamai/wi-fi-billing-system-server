@@ -1,21 +1,22 @@
 import { initiateStkPush } from "../services/mpesaService.js";
 import prisma from "../config/db.js";
 import { createSubscriptionForPayment } from "../services/subscriptionService.js";
+import logger from "../utils/logger.js"; // ✅ use Winston logger
 
 /**
- * Accepts either:
- * - userId (logged-in user) OR
- * - macAddress (guest device) with optional deviceName and phone
+ * ✅ Initiate STK Push
  */
 export const startPayment = async (req, res) => {
   try {
     const { phone, userId, planId, macAddress, deviceName, deviceId } =
       req.body;
 
-    if (!planId || (!userId && !macAddress)) {
+    if (!planId || (!userId && !macAddress && !deviceId)) {
       return res
         .status(400)
-        .json({ message: "Missing planId and (userId or macAddress)" });
+        .json({
+          message: "Missing planId and (userId, macAddress, or deviceId)",
+        });
     }
 
     // Fetch plan
@@ -24,13 +25,11 @@ export const startPayment = async (req, res) => {
     });
     if (!plan) return res.status(404).json({ message: "Plan not found" });
 
-    // Resolve user: logged-in user has priority; otherwise find-or-create guest by macAddress or deviceId
+    // ✅ Resolve or create user
     let user;
     if (userId) {
       user = await prisma.user.findUnique({ where: { id: Number(userId) } });
-      if (!user) return res.status(404).json({ message: "User not found" });
     } else {
-      // Find by deviceId if provided, else by macAddress
       const where = deviceId ? { deviceId } : { macAddress };
       user = await prisma.user.findUnique({ where });
 
@@ -44,19 +43,15 @@ export const startPayment = async (req, res) => {
             isGuest: true,
           },
         });
-      } else {
-        // Optionally update phone or deviceName if provided
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            phone: phone || user.phone,
-            deviceName: deviceName || user.deviceName,
-          },
-        });
+        logger.info(`🆕 Guest user created (deviceId=${deviceId})`);
       }
     }
 
-    // Create payment linked to plan and this user
+    if (!user) {
+      return res.status(404).json({ message: "User could not be resolved" });
+    }
+
+    // ✅ Create pending payment
     const payment = await prisma.payment.create({
       data: {
         userId: user.id,
@@ -67,48 +62,43 @@ export const startPayment = async (req, res) => {
       },
     });
 
-    // Trigger STK push
+    // ✅ Trigger STK push
     const stkResponse = await initiateStkPush({
       amount: plan.price,
-      phone: phone || user.phone, // if no phone given, front-end must collect it
+      phone: phone || user.phone,
       accountRef: `WIFI-${payment.id}`,
     });
 
-    // Save the checkoutRequestId
-    if (stkResponse?.CheckoutRequestID || stkResponse?.MerchantRequestID) {
+    // ✅ Save identifiers
+    if (stkResponse?.CheckoutRequestID) {
       await prisma.payment.update({
         where: { id: payment.id },
         data: {
-          checkoutRequestId: stkResponse.CheckoutRequestID || null,
+          checkoutRequestId: stkResponse.CheckoutRequestID,
           merchantRequestId: stkResponse.MerchantRequestID || null,
         },
       });
     }
 
+    logger.info(
+      `📲 STK Push initiated: Payment ${payment.id} for User ${user.id} (${plan.name})`
+    );
+
     res.status(200).json({
+      success: true,
       message: "STK push initiated",
       payment,
       stkResponse,
-      guestUser: user.isGuest
-        ? { id: user.id, macAddress: user.macAddress }
-        : null,
     });
-    // if (result === "SUCCESS") {
-    //   await createSubscriptionForPayment(updatedPayment);
-    //   const plan = await prisma.plan.findUnique({
-    //     where: { id: payment.planId },
-    //   });
-
-    //   console.log(
-    //     `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
-    //   );
-    // }
   } catch (error) {
-    console.error("STK push error:", error.response?.data || error.message);
+    logger.error(`STK push error: ${error.message}`);
     res.status(500).json({ message: "STK push failed", error: error.message });
   }
 };
 
+/**
+ * ✅ Automate Callback Handling
+ */
 export const handleCallback = async (req, res) => {
   try {
     const { Body } = req.body;
@@ -126,19 +116,25 @@ export const handleCallback = async (req, res) => {
     const phone =
       metadataItems.find((i) => i.Name === "PhoneNumber")?.Value || null;
 
+    // ✅ Find payment
     const payment = await prisma.payment.findUnique({
       where: { checkoutRequestId: CheckoutRequestID },
     });
 
     if (!payment) {
-      console.warn(
-        "Payment not found for CheckoutRequestID:",
-        CheckoutRequestID
+      logger.warn(
+        `⚠️ Payment not found for CheckoutRequestID=${CheckoutRequestID}`
       );
       return res.status(200).json({ message: "No matching payment found" });
     }
 
-    // Update payment status
+    // ✅ Skip if already processed
+    if (payment.status === "SUCCESS") {
+      logger.info(`🔁 Payment ${payment.id} already processed`);
+      return res.sendStatus(200);
+    }
+
+    // ✅ Update payment
     const updatedPayment = await prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -148,20 +144,24 @@ export const handleCallback = async (req, res) => {
       },
     });
 
-    // 🚀 Auto-create subscription after successful payment
     if (result === "SUCCESS") {
       await createSubscriptionForPayment(updatedPayment);
       const plan = await prisma.plan.findUnique({
         where: { id: payment.planId },
       });
 
-      console.log(
-        `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
+      logger.info(
+        `✅ Subscription created for User ${payment.userId} | Plan: ${plan.name} | Amount: ${amount}`
+      );
+    } else {
+      logger.warn(
+        `❌ Payment failed for user ${payment.userId}, reason: ${callback.ResultDesc}`
       );
     }
+
     res.sendStatus(200);
   } catch (error) {
-    console.error("Callback error:", error);
+    logger.error(`Callback error: ${error.message}`);
     res.sendStatus(500);
   }
 };
