@@ -8,6 +8,7 @@ import subscriptionRoutes from "./routes/subscription.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import mpeasaRoutes from "./routes/mpesa.js";
 import routerSessionRoutes from "./routes/routerSession.js";
+import logger from "./utils/logger.js";
 
 dotenv.config();
 const app = express();
@@ -16,6 +17,11 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
+// Log every request
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.url}`);
+  next();
+});
 app.use("/api/plans", planRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
