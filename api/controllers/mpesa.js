@@ -12,11 +12,9 @@ export const startPayment = async (req, res) => {
       req.body;
 
     if (!planId || (!userId && !macAddress && !deviceId)) {
-      return res
-        .status(400)
-        .json({
-          message: "Missing planId and (userId, macAddress, or deviceId)",
-        });
+      return res.status(400).json({
+        message: "Missing planId and (userId, macAddress, or deviceId)",
+      });
     }
 
     // Fetch plan
@@ -163,5 +161,51 @@ export const handleCallback = async (req, res) => {
   } catch (error) {
     logger.error(`Callback error: ${error.message}`);
     res.sendStatus(500);
+  }
+};
+export const listPayments = async (req, res, next) => {
+  try {
+    const { search, limit = 50, offset = 0 } = req.query;
+
+    if (search) {
+      where.OR = [
+        { user: { phone: { contains: search } } },
+        { plan: { name: { contains: search } } },
+        { mpesaCode: { contains: search } },
+        { createdAt: { contains: search } },
+      ];
+    }
+    const payments = await prisma.payment.findMany({
+      include: {
+        user: { select: { phone: true } },
+        plan: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.status(200).json(payments);
+  } catch (error) {
+    next(error);
+  }
+};
+export const getPaymentDetails = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: Number(id) },
+      include: {
+        user: { select: { phone: true, macAddress: true, deviceName: true } },
+        plan: true,
+      },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ message: "Payment not found" });
+    }
+
+    res.status(200).json(payment);
+  } catch (error) {
+    next(error);
   }
 };

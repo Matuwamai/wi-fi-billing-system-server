@@ -46,3 +46,60 @@
 [2025-11-04 17:45:45] info: GET /api/plans
 [2025-11-04 17:45:45] info: GET /api/plans
 [2025-11-04 17:46:01] info: POST /api/mpesa/pay
+[2025-11-04 18:23:54] info: POST /api/mpesa/pay
+[2025-11-04 18:23:56] info: 📲 STK Push initiated: Payment 23 for User 2 (1 Hour)
+[2025-11-04 19:01:55] info: POST /api/mpesa/pay
+[2025-11-04 19:01:57] info: 📲 STK Push initiated: Payment 24 for User 2 (1 Hour)
+[2025-11-04 19:02:23] info: POST /api/mpesa/callback
+[2025-11-04 19:02:23] warn: ❌ Payment failed for user 2, reason: No response from user.
+[2025-11-04 19:02:50] info: GET /api/plans
+[2025-11-04 19:02:50] info: GET /api/plans
+[2025-11-04 19:03:08] info: POST /api/mpesa/pay
+[2025-11-04 19:03:10] info: 📲 STK Push initiated: Payment 25 for User 2 (1 Hour)
+[2025-11-04 19:03:18] info: POST /api/mpesa/callback
+[2025-11-04 19:03:18] info: ✅ Subscription created for User 2 | Plan: 1 Hour | Amount: 1
+[2025-11-04 19:54:43] info: GET /api/plans
+[2025-11-04 19:54:43] info: GET /api/plans
+[2025-11-05 09:26:58] info: GET /api/plans
+[2025-11-05 09:26:58] info: GET /api/plans
+[2025-11-05 09:28:30] info: POST /api/mpesa/pay
+[2025-11-05 09:28:32] info: 📲 STK Push initiated: Payment 26 for User 2 (1 Hour)
+[2025-11-05 09:28:53] info: POST /api/mpesa/callback
+[2025-11-05 09:28:53] warn: ❌ Payment failed for user 2, reason: Request Cancelled by user.
+[2025-11-05 09:48:09] info: GET /api/plans
+[2025-11-05 09:48:09] info: GET /api/plans
+[2025-11-05 09:48:22] info: GET /api/plans
+[2025-11-05 09:48:22] info: GET /api/plans
+[2025-11-05 09:49:52] info: GET /api/plans
+[2025-11-05 09:49:52] info: GET /api/plans
+[2025-11-09 17:52:59] info: GET /api/plans
+[2025-11-09 17:52:59] info: GET /api/plans
+[2025-11-09 17:53:13] info: GET /api/plans
+[2025-11-09 17:53:13] info: GET /api/plans
+[2025-11-09 17:53:50] info: GET /api/subscriptions/user
+[2025-11-09 17:53:50] info: GET /api/subscriptions/user
+[2025-11-09 17:59:57] info: GET /api/subscriptions/user
+[2025-11-09 17:59:57] info: GET /api/subscriptions/user
+[2025-11-09 18:01:53] info: GET /api/subscriptions/all
+[2025-11-09 18:01:53] info: GET /api/subscriptions/all
+[2025-11-09 18:02:53] info: GET /api/subscriptions/all
+[2025-11-09 18:02:53] info: GET /api/subscriptions/all
+[2025-11-09 18:06:53] info: GET /api/subscriptions/all
+[2025-11-09 18:06:53] info: GET /api/subscriptions/all
+[2025-11-09 18:08:38] info: GET /api/subscriptions/all
+[2025-11-09 18:08:50] info: POST /api/users/login
+[2025-11-09 18:10:20] info: GET /api/plans
+[2025-11-09 18:10:31] info: GET /api/subscriptions/all
+[2025-11-09 18:10:42] info: POST /api/users/login
+[2025-11-09 18:11:35] info: POST /api/user/login
+[2025-11-09 18:12:00] info: GET /api/subscriptions/all
+[2025-11-09 18:12:48] info: GET /api/subscriptions/all
+[2025-11-09 18:12:48] info: GET /api/subscriptions/all
+[2025-11-09 19:06:48] info: GET /api/payments
+[2025-11-09 19:06:48] info: GET /api/payments?search=
+[2025-11-09 19:06:48] info: GET /api/payments
+[2025-11-09 19:06:48] info: GET /api/payments?search=
+[2025-11-09 19:08:12] info: GET /api/payments
+[2025-11-09 19:08:39] info: GET /api/payments
+[2025-11-09 19:09:26] info: POST /api/mpesa
+[2025-11-09 19:10:20] info: GET /api/mpesa
