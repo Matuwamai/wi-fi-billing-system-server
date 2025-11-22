@@ -1,0 +1,7 @@
+[2025-11-20 23:20:14] error: STK push error: 
+Invalid `prisma.plan.findUnique()` invocation:
+
+
+Can't reach database server at `localhost:3306`
+
+Please make sure your database server is running at `localhost:3306`.
