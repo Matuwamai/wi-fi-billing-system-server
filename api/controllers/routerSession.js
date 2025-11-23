@@ -1,19 +1,30 @@
-import MikroNode from "mikronode-ng";
+import { RouterSessionManager } from "../services/routerSessionService.js";
+export const startSession = async (req, res) => {
+  try {
+    const { userId, macAddress, ipAddress } = req.body;
 
-const routerConfig = {
-  host: process.env.MIKROTIK_HOST,
-  user: process.env.MIKROTIK_USER,
-  password: process.env.MIKROTIK_PASS,
-  apiPort: process.env.MIKROTIK_API_PORT,
+    const session = await RouterSessionManager.start({
+      userId,
+      macAddress,
+      ipAddress,
+    });
+
+    res.status(201).json({ message: "Session started", session });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
+export const endSession = async (req, res) => {
+  try {
+    const { macAddress } = req.body;
 
-export const getMikroTikConnection = () => {
-  return MikroNode.getConnection(
-    routerConfig.host,
-    routerConfig.user,
-    routerConfig.password,
-    {
-      port: routerConfig.apiPort || 8728,
-    }
-  );
+    const session = await RouterSessionManager.end({ macAddress });
+
+    res.status(200).json({
+      message: "Session ended",
+      session,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };

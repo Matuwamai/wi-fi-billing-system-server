@@ -1,46 +1,24 @@
-import cron from "node-cron";
-import prisma from "../config/db.js";
-import { autoExpireSessions } from "../controllers/routerSession.js";
-/**
- * Auto-expire subscriptions whose endTime has passed
- */
+export const autoExpireSessions = async () => {
+  const now = new Date();
 
-const subscriptionExpiryJob = () => {
-  // Runs every 5 minutes
-  cron.schedule("*/5 * * * *", async () => {
-    console.log("🔁 Checking for expired subscriptions...");
-
-    try {
-      const now = new Date();
-
-      // Find subscriptions that should expire
-      const expiredSubs = await prisma.subscription.findMany({
-        where: {
-          status: "ACTIVE",
-          endTime: { lt: now },
-        },
-      });
-
-      if (expiredSubs.length > 0) {
-        const ids = expiredSubs.map((s) => s.id);
-
-        await prisma.subscription.updateMany({
-          where: { id: { in: ids } },
-          data: { status: "EXPIRED" },
-        });
-
-        console.log(`✅ ${ids.length} subscriptions auto-expired.`);
-      } else {
-        console.log("⏳ No expired subscriptions found.");
-      }
-      cron.schedule("*/5 * * * *", async () => {
-        console.log("🔁 Checking for expired sessions...");
-        await autoExpireSessions();
-      });
-    } catch (error) {
-      console.error("❌ Error running subscription expiry job:", error.message);
-    }
+  const expiredSubs = await prisma.subscription.findMany({
+    where: { endTime: { lt: now }, status: "ACTIVE" },
   });
-};
 
-export default subscriptionExpiryJob;
+  for (const sub of expiredSubs) {
+    const activeSessions = await prisma.routerSession.findMany({
+      where: { userId: sub.userId, logoutTime: null },
+      include: { user: true },
+    });
+
+    for (const s of activeSessions) {
+      await RouterSessionManager.end({ macAddress: s.macAddress });
+      console.log(`Session auto-ended for user ${sub.userId}`);
+    }
+
+    await prisma.subscription.update({
+      where: { id: sub.id },
+      data: { status: "EXPIRED" },
+    });
+  }
+};

@@ -93,6 +93,7 @@ enum UserStatus {
 }
 
 enum DurationType {
+  MINUTE
   HOUR
   DAY
   WEEK

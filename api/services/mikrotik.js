@@ -1,105 +1,62 @@
 import MikroNode from "mikronode-ng";
-import prisma from "../config/db.js";
+import dotenv from "dotenv";
+dotenv.config();
 
-// Router connection credentials
 const routerConfig = {
   host: process.env.MIKROTIK_HOST,
   user: process.env.MIKROTIK_USER,
   password: process.env.MIKROTIK_PASS,
-  apiPort: process.env.MIKROTIK_API_PORT,
+  apiPort: parseInt(process.env.MIKROTIK_API_PORT) || 8728,
 };
 
-export const createRouterSession = async ({
-  userId,
-  planId,
-  subscriptionId,
-}) => {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  const plan = await prisma.plan.findUnique({ where: { id: planId } });
+// Validate configuration on import
+if (!routerConfig.host) {
+  console.warn("⚠️  MIKROTIK_HOST is not configured in .env");
+}
+if (!routerConfig.user) {
+  console.warn("⚠️  MIKROTIK_USER is not configured in .env");
+}
+if (!routerConfig.password) {
+  console.warn("⚠️  MIKROTIK_PASS is not configured in .env");
+}
 
-  if (!user || !plan) throw new Error("User or Plan not found");
-
-  const connection = MikroNode.getConnection(
-    routerConfig.host,
-    routerConfig.user,
-    routerConfig.password
+// Ensure port is a valid number
+if (isNaN(routerConfig.apiPort)) {
+  console.warn(
+    "⚠️  MIKROTIK_API_PORT is not a valid number, using default 8728"
   );
+  routerConfig.apiPort = 8728;
+}
 
-  return new Promise((resolve, reject) => {
-    connection.connect(async (conn) => {
-      try {
-        const chan = conn.openChannel("add-user");
-        const profileName = plan.name.replace(/\s+/g, "_");
+console.log("📡 MikroTik Configuration:");
+console.log(`   Host: ${routerConfig.host}`);
+console.log(`   User: ${routerConfig.user}`);
+console.log(`   Port: ${routerConfig.apiPort}`);
 
-        // Add user to MikroTik hotspot
-        chan.write(`/ip/hotspot/user/add`, [
-          `=name=${user.username}`,
-          `=password=${user.password}`,
-          `=profile=${profileName}`,
-          `=comment=Subscription ${subscriptionId}`,
-        ]);
+export const getMikroTikConnection = () => {
+  if (!routerConfig.host || !routerConfig.user || !routerConfig.password) {
+    throw new Error(
+      "MikroTik configuration is incomplete. Check your .env file."
+    );
+  }
 
-        chan.on("done", async () => {
-          await prisma.routerSession.create({
-            data: {
-              userId,
-              planId,
-              subscriptionId,
-              status: "ACTIVE",
-              startedAt: new Date(),
-            },
-          });
-          chan.close();
-          conn.close();
-          resolve(true);
-        });
-
-        chan.on("trap", (err) => reject(err));
-      } catch (error) {
-        reject(error);
+  try {
+    return MikroNode.getConnection(
+      routerConfig.host,
+      routerConfig.user,
+      routerConfig.password,
+      {
+        port: routerConfig.apiPort,
+        timeout: 10, // 10 seconds timeout
       }
-    });
-  });
+    );
+  } catch (error) {
+    console.error("❌ Failed to create MikroTik connection:", error.message);
+    throw error;
+  }
 };
-export const disableRouterSession = async (routerSession) => {
-  const user = await prisma.user.findUnique({
-    where: { id: routerSession.userId },
-  });
 
-  if (!user) throw new Error("User not found for router session");
-
-  const connection = MikroNode.getConnection(
-    routerConfig.host,
-    routerConfig.user,
-    routerConfig.password
-  );
-
-  return new Promise((resolve, reject) => {
-    connection.connect(async (conn) => {
-      try {
-        const chan = conn.openChannel("remove-user");
-
-        // Remove user from MikroTik Hotspot
-        chan.write(`/ip/hotspot/user/remove`, [`=numbers=${user.username}`]);
-
-        chan.on("done", async () => {
-          await prisma.routerSession.update({
-            where: { id: routerSession.id },
-            data: {
-              status: "INACTIVE",
-              endedAt: new Date(),
-            },
-          });
-          chan.close();
-          conn.close();
-          console.log(`🚫 Disabled router session for user: ${user.username}`);
-          resolve(true);
-        });
-
-        chan.on("trap", (err) => reject(err));
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
+export default {
+  getMikroTikConnection,
+  config: routerConfig,
 };

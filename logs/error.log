@@ -5,3 +5,6 @@ Invalid `prisma.plan.findUnique()` invocation:
 Can't reach database server at `localhost:3306`
 
 Please make sure your database server is running at `localhost:3306`.
+[2025-11-22 13:35:31] error: Callback error: res is not defined
+[2025-11-22 13:37:02] error: Callback error: res is not defined
+[2025-11-22 19:19:43] error: Callback error: res is not defined

@@ -1,6 +1,7 @@
 // services/subscriptionService.js
 import prisma from "../config/db.js";
 import { add } from "date-fns";
+import { RouterSessionManager } from "./routerSessionService.js";
 
 /**
  * Automatically creates a subscription when payment succeeds
@@ -56,6 +57,36 @@ export const createSubscriptionForPayment = async (payment) => {
       status: "ACTIVE",
     },
   });
+  // 🚀 AUTOMATICALLY START ROUTER SESSION
+  try {
+    const session = await RouterSessionManager.startAutomatic({
+      subscriptionId: subscription.id,
+      macAddress: payment.user.macAddress,
+      ipAddress: null, // Will be assigned by router
+    });
+
+    console.log(
+      `✅ Router session started automatically for user ${payment.user.phone}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed and session started",
+      subscription,
+      session,
+    });
+  } catch (sessionError) {
+    console.error("Failed to start router session:", sessionError);
+
+    // Subscription created but session failed - user can manually connect
+    res.status(200).json({
+      success: true,
+      message:
+        "Payment processed. Please connect manually to start using the internet.",
+      subscription,
+      sessionError: sessionError.message,
+    });
+  }
 
   console.log(
     `✅ Subscription created for user ${payment.userId} (Plan: ${plan.name})`
