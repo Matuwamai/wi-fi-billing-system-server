@@ -22,6 +22,7 @@ model User {
   subscriptions  Subscription[]
   routerSessions RouterSession[]
   payments       Payment[]
+  vouchers       Voucher[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -35,6 +36,7 @@ model Plan {
   price         Float
   paments       Payment[]
   subscriptions Subscription[]
+  vouchers      Voucher[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   RouterSession RouterSession[]
@@ -54,6 +56,7 @@ model Subscription {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   RouterSession RouterSession[]
+  vouchers      Voucher[]
 }
 
 model Payment {
@@ -91,6 +94,31 @@ model RouterSession {
   user           User         @relation(fields: [userId], references: [id])
   plan           Plan         @relation(fields: [planId], references: [id])
   subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+}
+
+// Add this to your schema.prisma
+
+model Voucher {
+  id             Int           @id @default(autoincrement())
+  code           String        @unique // Voucher code (e.g., ABCD-EFGH-IJKL)
+  planId         Int
+  status         VoucherStatus @default(UNUSED)
+  expiresAt      DateTime // When the voucher expires
+  usedAt         DateTime? // When it was redeemed
+  usedBy         Int? // User who redeemed it
+  subscriptionId Int? // Subscription created from this voucher
+  createdBy      Int? // Admin who created it
+  plan           Plan          @relation(fields: [planId], references: [id])
+  user           User?         @relation(fields: [usedBy], references: [id])
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+enum VoucherStatus {
+  UNUSED
+  USED
+  EXPIRED
 }
 
 enum UserStatus {
