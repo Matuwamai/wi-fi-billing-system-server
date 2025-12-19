@@ -11,9 +11,10 @@ datasource db {
 
 model User {
   id             Int             @id @default(autoincrement())
-  phone          String          @unique
+  phone          String?         @unique // Make it nullable with ?
   macAddress     String?         @unique
   password       String?
+  username       String?         @unique // Add username field
   deviceName     String?
   deviceId       String?         @unique
   isGuest        Boolean         @default(false)
@@ -77,7 +78,12 @@ model RouterSession {
   userId         Int
   planId         Int
   subscriptionId Int
+  macAddress     String? // Add MAC address
+  ipAddress      String? // Add IP address
   status         String       @default("ACTIVE")
+  loginTime      DateTime     @default(now()) // Rename from startedAt
+  logoutTime     DateTime? // Add logout time
+  duration       Int? // Add duration in minutes
   startedAt      DateTime     @default(now())
   endedAt        DateTime?
   createdAt      DateTime     @default(now())

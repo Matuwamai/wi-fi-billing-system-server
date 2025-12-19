@@ -11,9 +11,18 @@ export const startPayment = async (req, res) => {
     const { phone, userId, planId, macAddress, deviceName, deviceId } =
       req.body;
 
-    if (!planId || (!userId && !macAddress && !deviceId)) {
+    console.log("📥 Payment request received:", {
+      phone,
+      userId,
+      planId,
+      macAddress,
+      deviceName,
+    });
+
+    if (!planId) {
       return res.status(400).json({
-        message: "Missing planId and (userId, macAddress, or deviceId)",
+        success: false,
+        message: "Missing planId",
       });
     }
 
@@ -21,17 +30,72 @@ export const startPayment = async (req, res) => {
     const plan = await prisma.plan.findUnique({
       where: { id: Number(planId) },
     });
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+
+    if (!plan) {
+      return res.status(404).json({
+        success: false,
+        message: "Plan not found",
+      });
+    }
+
+    console.log("✅ Plan found:", plan.name);
 
     // ✅ Resolve or create user
-    let user;
-    if (userId) {
-      user = await prisma.user.findUnique({ where: { id: Number(userId) } });
-    } else {
-      const where = deviceId ? { deviceId } : { macAddress };
-      user = await prisma.user.findUnique({ where });
+    let user = null;
 
+    // Try to find user by ID first
+    if (userId) {
+      console.log("🔍 Looking up user by ID:", userId);
+      user = await prisma.user.findUnique({
+        where: { id: Number(userId) },
+      });
+
+      if (user) {
+        console.log(`✅ Found existing user: ${user.id}`);
+
+        // Update MAC address and device name
+        if (macAddress || deviceName) {
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              ...(macAddress && { macAddress }),
+              ...(deviceName && { deviceName }),
+            },
+          });
+          console.log(
+            `✅ User ${user.id} updated - MAC: ${macAddress}, Device: ${deviceName}`
+          );
+        }
+      } else {
+        console.log(`⚠️  User ID ${userId} not found, will create guest user`);
+      }
+    }
+
+    // If no user found by ID, try to find or create guest user
+    if (!user) {
+      console.log("🔍 Looking for existing guest user by MAC/phone...");
+
+      // Try to find existing guest user by MAC or phone
+      const whereConditions = [];
+      if (macAddress) whereConditions.push({ macAddress });
+      if (phone) whereConditions.push({ phone });
+
+      if (whereConditions.length > 0) {
+        user = await prisma.user.findFirst({
+          where: {
+            OR: whereConditions,
+          },
+        });
+
+        console.log(
+          "🔍 Guest lookup result:",
+          user ? `Found user ${user.id}` : "No existing user"
+        );
+      }
+
+      // Create new guest user if still not found
       if (!user) {
+        console.log("🆕 Creating new guest user...");
         user = await prisma.user.create({
           data: {
             phone: phone || null,
@@ -41,13 +105,31 @@ export const startPayment = async (req, res) => {
             isGuest: true,
           },
         });
-        logger.info(`🆕 Guest user created (deviceId=${deviceId})`);
+        console.log(
+          `✅ Guest user created: ID=${user.id}, Phone=${phone}, MAC=${macAddress}`
+        );
+      } else {
+        // Update existing user with latest info
+        console.log("📝 Updating existing user with new info...");
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            ...(phone && { phone }),
+            ...(macAddress && { macAddress }),
+            ...(deviceName && { deviceName }),
+            ...(deviceId && { deviceId }),
+          },
+        });
+        console.log(`✅ User ${user.id} updated`);
       }
     }
 
-    if (!user) {
-      return res.status(404).json({ message: "User could not be resolved" });
-    }
+    console.log("✅✅ User successfully resolved:", {
+      id: user.id,
+      phone: user.phone,
+      macAddress: user.macAddress,
+      isGuest: user.isGuest,
+    });
 
     // ✅ Create pending payment
     const payment = await prisma.payment.create({
@@ -56,6 +138,101 @@ export const startPayment = async (req, res) => {
         planId: plan.id,
         amount: plan.price,
         method: "MPESA",
+        status: "PENDING",
+      },
+    });
+
+    console.log(
+      `💰 Payment created: ID=${payment.id}, Amount: ${payment.amount}`
+    );
+
+    // ✅ Trigger STK push
+    const stkResponse = await initiateStkPush({
+      amount: plan.price,
+      phone: phone || user.phone,
+      accountRef: `WIFI-${payment.id}`,
+    });
+
+    // ✅ Save STK identifiers
+    if (stkResponse?.CheckoutRequestID) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          checkoutRequestId: stkResponse.CheckoutRequestID,
+          merchantRequestId: stkResponse.MerchantRequestID || null,
+        },
+      });
+    }
+
+    logger.info(
+      `📲 STK Push initiated: Payment ${payment.id} for User ${user.id} (${plan.name})`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "STK push initiated",
+      payment,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        macAddress: user.macAddress,
+      },
+      stkResponse,
+    });
+  } catch (error) {
+    console.error("❌ Payment error:", error);
+    console.error("Error stack:", error.stack);
+    logger.error(`STK push error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: "STK push failed",
+      error: error.message,
+    });
+  }
+};
+
+// paymentController.js or mpesaController.js
+export const initiatePayment = async (req, res) => {
+  try {
+    const { phone, userId, planId, macAddress, deviceName } = req.body;
+
+    console.log("Payment request:", {
+      phone,
+      userId,
+      planId,
+      macAddress,
+      deviceName,
+    });
+
+    // Validate inputs
+    if (!phone || !userId || !planId) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone, userId, and planId are required",
+      });
+    }
+
+    // Update user with MAC address and device name if provided
+    if (macAddress || deviceName) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(macAddress && { macAddress }),
+          ...(deviceName && { deviceName }),
+        },
+      });
+      console.log(
+        `✅ User ${userId} updated with MAC: ${macAddress}, Device: ${deviceName}`
+      );
+    }
+
+    // Create payment record
+    const payment = await prisma.payment.create({
+      data: {
+        userId,
+        planId,
+        phone,
+        amount: plan.price, // Get from plan
         status: "PENDING",
       },
     });
@@ -89,11 +266,10 @@ export const startPayment = async (req, res) => {
       stkResponse,
     });
   } catch (error) {
-    logger.error(`STK push error: ${error.message}`);
-    res.status(500).json({ message: "STK push failed", error: error.message });
+    console.error("Payment initiation error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
-
 /**
  * ✅ Automate Callback Handling
  */
