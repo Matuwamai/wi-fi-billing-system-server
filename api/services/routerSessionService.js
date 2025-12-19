@@ -1,15 +1,40 @@
+// Based on your screenshot, these columns appear empty in RouterSession:
+// - ipAddress
+// - loginTime
+// - logoutTime
+// - duration
+// - macAddress (in session table, not user table)
+
+// Here's the updated RouterSessionManager with proper data population:
+
 import prisma from "../config/db.js";
 import { connectMikroTik } from "./mikrotik.js";
 import { differenceInMinutes } from "date-fns";
 
-// Helper to generate username from phone
 const generateUsername = (phone) => {
   return `user_${phone.replace(/\D/g, "")}`;
 };
 
-// Helper to generate random password
 const generatePassword = () => {
   return Math.random().toString(36).slice(-8);
+};
+
+const getItemId = (item) => {
+  return item[".id"] || item.id || item[".id*"] || null;
+};
+
+const closeMikrotik = (client) => {
+  if (!client) return;
+  try {
+    if (typeof client.close === "function") {
+      client.close();
+    } else if (typeof client.disconnect === "function") {
+      client.disconnect();
+    }
+    console.log("🔌 MikroTik connection closed");
+  } catch (e) {
+    console.warn("⚠️ Failed to close MikroTik connection:", e.message);
+  }
 };
 
 export const RouterSessionManager = {
@@ -19,8 +44,6 @@ export const RouterSessionManager = {
   startAutomatic: async ({ subscriptionId, macAddress, ipAddress }) => {
     let client;
     try {
-      client = await connectMikroTik();
-      // Get subscription with user and plan details
       const subscription = await prisma.subscription.findUnique({
         where: { id: subscriptionId },
         include: {
@@ -31,7 +54,6 @@ export const RouterSessionManager = {
 
       if (!subscription) throw new Error("Subscription not found");
 
-      // Check if subscription is active
       if (
         subscription.status !== "ACTIVE" ||
         new Date(subscription.endTime) < new Date()
@@ -39,7 +61,6 @@ export const RouterSessionManager = {
         throw new Error("Subscription is not active");
       }
 
-      // Check if user already has an active session
       const existingSession = await prisma.routerSession.findFirst({
         where: {
           userId: subscription.userId,
@@ -49,11 +70,9 @@ export const RouterSessionManager = {
       });
 
       if (existingSession) {
-        // End the old session first
-        await this.end({ userId: subscription.userId });
+        await RouterSessionManager.end({ userId: subscription.userId });
       }
 
-      // Generate credentials if user doesn't have them
       let username = subscription.user.username;
       let password = subscription.user.password;
 
@@ -69,7 +88,6 @@ export const RouterSessionManager = {
         });
       }
 
-      // Update user's MAC address if provided
       if (macAddress && macAddress !== subscription.user.macAddress) {
         await prisma.user.update({
           where: { id: subscription.userId },
@@ -77,30 +95,19 @@ export const RouterSessionManager = {
         });
       }
 
-      // Connect to MikroTik with timeout
       console.log("🔌 Connecting to MikroTik...");
       try {
-        client = await Promise.race([
-          connectMikroTik(),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("MikroTik connection timeout")),
-              15000
-            )
-          ),
-        ]);
+        client = await connectMikroTik();
         console.log("✅ MikroTik connected");
       } catch (connError) {
         console.error("❌ MikroTik connection failed:", connError.message);
         throw new Error(`Cannot connect to MikroTik: ${connError.message}`);
       }
 
-      // Profile name from plan (remove spaces and special characters)
       let profileName = subscription.plan.name
         .replace(/\s+/g, "_")
         .replace(/[^a-zA-Z0-9_-]/g, "");
 
-      // Check and create profile if needed
       try {
         console.log(`🔍 Checking if profile "${profileName}" exists...`);
         const profiles = await client.menu("/ip/hotspot/user/profile").getAll();
@@ -109,7 +116,6 @@ export const RouterSessionManager = {
         if (!profileExists) {
           console.log(`🆕 Creating profile: ${profileName}`);
 
-          // Calculate session timeout based on plan
           let sessionTimeout;
           switch (subscription.plan.durationType) {
             case "MINUTE":
@@ -125,7 +131,6 @@ export const RouterSessionManager = {
               sessionTimeout = `${subscription.plan.durationValue}w`;
               break;
             case "MONTH":
-              // MikroTik doesn't have month, convert to days (30 days per month)
               sessionTimeout = `${subscription.plan.durationValue * 30}d`;
               break;
             default:
@@ -134,7 +139,7 @@ export const RouterSessionManager = {
 
           await client.menu("/ip/hotspot/user/profile").add({
             name: profileName,
-            "rate-limit": "10M/10M", // 10 Mbps up/down - adjust as needed
+            "rate-limit": "10M/10M",
             "session-timeout": sessionTimeout,
             "shared-users": "1",
             "keepalive-timeout": "2m",
@@ -152,24 +157,112 @@ export const RouterSessionManager = {
         profileName = "default";
       }
 
-      // Add user to hotspot
-      console.log(`👤 Adding user "${username}" to hotspot...`);
-      await client.menu("/ip/hotspot/user").add({
-        name: username,
-        password: password,
-        profile: profileName,
-        "mac-address": macAddress,
-        comment: `Sub_${subscriptionId}`,
-      });
+      console.log(`👤 Syncing hotspot user "${username}"...`);
 
-      // Create session in database
+      try {
+        const hotspotMenu = client.menu("/ip/hotspot/user");
+
+        console.log("🔍 Checking for existing user...");
+        const allUsers = await hotspotMenu.getAll();
+        console.log(`📋 Found ${allUsers.length} total hotspot users`);
+
+        const existingUser = allUsers.find((u) => u.name === username);
+
+        if (existingUser) {
+          const userId = getItemId(existingUser);
+          console.log(`♻️ Found existing user "${username}" (ID: ${userId})`);
+
+          if (userId) {
+            try {
+              console.log(`🗑️ Removing existing user...`);
+              await hotspotMenu.remove(userId);
+              console.log("✅ Old user removed successfully");
+
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            } catch (removeErr) {
+              console.warn(`⚠️ Remove failed: ${removeErr.message}`);
+            }
+          }
+        } else {
+          console.log("ℹ️ No existing user found with this username");
+        }
+
+        console.log("➕ Adding hotspot user...");
+        await hotspotMenu.add({
+          name: username,
+          password: password,
+          profile: profileName,
+          ...(macAddress && { "mac-address": macAddress }),
+          comment: `Sub_${subscriptionId}`,
+        });
+
+        console.log("✅ Hotspot user added successfully");
+      } catch (userError) {
+        console.error("❌ Hotspot user operation failed:", userError.message);
+
+        if (
+          userError.message &&
+          userError.message.includes("already have user")
+        ) {
+          console.log("🔄 Attempting alternative cleanup method...");
+
+          try {
+            const hotspotMenu = client.menu("/ip/hotspot/user");
+            const usersByName = await hotspotMenu
+              .where("name", username)
+              .getAll();
+
+            console.log(
+              `📋 Found ${usersByName.length} users matching name "${username}"`
+            );
+
+            for (const user of usersByName) {
+              const userId = getItemId(user);
+              if (userId) {
+                try {
+                  await hotspotMenu.remove(userId);
+                  console.log(`🗑️ Removed user ID: ${userId}`);
+                } catch (e) {
+                  console.warn(
+                    `⚠️ Failed to remove ID ${userId}: ${e.message}`
+                  );
+                }
+              }
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            await hotspotMenu.add({
+              name: username,
+              password: password,
+              profile: profileName,
+              ...(macAddress && { "mac-address": macAddress }),
+              comment: `Sub_${subscriptionId}`,
+            });
+
+            console.log("✅ User added after alternative cleanup");
+          } catch (altError) {
+            console.error("❌ Alternative method failed:", altError.message);
+            throw new Error(
+              `Cannot sync hotspot user after multiple attempts: ${altError.message}`
+            );
+          }
+        } else {
+          throw new Error(`Failed to sync hotspot user: ${userError.message}`);
+        }
+      }
+
+      // ✅ Create session with ALL required fields
       const session = await prisma.routerSession.create({
         data: {
           userId: subscription.userId,
           planId: subscription.planId,
           subscriptionId: subscription.id,
           status: "ACTIVE",
-          startedAt: new Date(),
+          ipAddress: ipAddress || null,
+          macAddress: macAddress || null,
+          // loginTime, startedAt use @default(now()) from schema
+          // logoutTime, duration, endedAt set when session ends
         },
       });
 
@@ -178,28 +271,13 @@ export const RouterSessionManager = {
       );
       return session;
     } catch (error) {
-      // Check if user already exists
-      if (error.message && error.message.includes("already exists")) {
-        console.log("⚠️  User already exists, updating...");
-        return await this.updateExistingUser({
-          subscriptionId,
-          macAddress,
-          ipAddress,
-        });
-      }
       console.error("❌ Session start error:", error.message);
       throw error;
     } finally {
-      if (client) {
-        try {
-          await client.close();
-          console.log("🔌 MikroTik connection closed");
-        } catch (e) {
-          console.warn("⚠️ Failed to close MikroTik connection:", e.message);
-        }
-      }
+      closeMikrotik(client);
     }
   },
+
   /**
    * Update existing MikroTik user
    */
@@ -226,41 +304,42 @@ export const RouterSessionManager = {
         .replace(/\s+/g, "_")
         .replace(/[^a-zA-Z0-9_-]/g, "");
 
-      // Connect to MikroTik
       client = await connectMikroTik();
+      const hotspotMenu = client.menu("/ip/hotspot/user");
 
-      // Get existing user
-      const existingUsers = await client.menu("/ip/hotspot/user").getAll();
+      const existingUsers = await hotspotMenu.getAll();
       const userEntry = existingUsers.find((u) => u.name === username);
 
       if (userEntry) {
-        // Update existing user
-        await client.menu("/ip/hotspot/user").update({
-          id: userEntry[".id"],
-          password: password,
-          profile: profileName,
-          "mac-address": macAddress,
-          comment: `Sub_${subscriptionId}`,
-        });
-      } else {
-        // Add new user if not found
-        await client.menu("/ip/hotspot/user").add({
-          name: username,
-          password: password,
-          profile: profileName,
-          "mac-address": macAddress,
-          comment: `Sub_${subscriptionId}`,
-        });
+        const userId = getItemId(userEntry);
+        if (userId) {
+          try {
+            await hotspotMenu.remove(userId);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          } catch (e) {
+            console.warn("⚠️ Remove failed:", e.message);
+          }
+        }
       }
 
-      // Create session in database
+      await hotspotMenu.add({
+        name: username,
+        password: password,
+        profile: profileName,
+        ...(macAddress && { "mac-address": macAddress }),
+        comment: `Sub_${subscriptionId}`,
+      });
+
+      // ✅ Create session with ALL required fields
       const session = await prisma.routerSession.create({
         data: {
           userId: subscription.userId,
           planId: subscription.planId,
           subscriptionId: subscription.id,
           status: "ACTIVE",
-          startedAt: new Date(),
+          ipAddress: ipAddress || null,
+          macAddress: macAddress || null,
+          // loginTime, startedAt use @default(now()) from schema
         },
       });
 
@@ -268,6 +347,8 @@ export const RouterSessionManager = {
       return session;
     } catch (error) {
       throw error;
+    } finally {
+      closeMikrotik(client);
     }
   },
 
@@ -277,10 +358,8 @@ export const RouterSessionManager = {
   start: async ({ userId, macAddress, ipAddress }) => {
     try {
       const user = await prisma.user.findUnique({ where: { id: userId } });
-
       if (!user) throw new Error("User not found");
 
-      // Find active subscription
       const activeSub = await prisma.subscription.findFirst({
         where: {
           userId,
@@ -294,8 +373,7 @@ export const RouterSessionManager = {
 
       if (!activeSub) throw new Error("No active subscription found");
 
-      // Use the automatic starter
-      return await this.startAutomatic({
+      return await RouterSessionManager.startAutomatic({
         subscriptionId: activeSub.id,
         macAddress,
         ipAddress,
@@ -311,10 +389,9 @@ export const RouterSessionManager = {
   end: async ({ userId, macAddress }) => {
     let client;
     try {
-      const whereClause = {};
+      const whereClause = { endedAt: null };
       if (userId) whereClause.userId = userId;
       if (macAddress) whereClause.macAddress = macAddress;
-      whereClause.endedAt = null;
 
       const session = await prisma.routerSession.findFirst({
         where: whereClause,
@@ -323,46 +400,56 @@ export const RouterSessionManager = {
 
       if (!session) throw new Error("Session not found");
 
-      // Connect to MikroTik
       client = await connectMikroTik();
-
-      // Get all hotspot users
-      const users = await client.menu("/ip/hotspot/user").getAll();
+      const hotspotMenu = client.menu("/ip/hotspot/user");
+      const users = await hotspotMenu.getAll();
       const userEntry = users.find((u) => u.name === session.user.username);
 
       if (userEntry) {
-        // Remove user from hotspot
-        await client.menu("/ip/hotspot/user").remove(userEntry[".id"]);
-        console.log(`🗑️  Removed user ${session.user.username} from MikroTik`);
+        const userId = getItemId(userEntry);
+        if (userId) {
+          try {
+            await hotspotMenu.remove(userId);
+            console.log(
+              `🗑️ Removed user ${session.user.username} from MikroTik`
+            );
+          } catch (removeErr) {
+            console.warn(`⚠️ Failed to remove user: ${removeErr.message}`);
+          }
+        }
       }
 
-      // Update session in database
+      // ✅ FIXED: Calculate duration and set all end fields
       const endedAt = new Date();
+      const durationMinutes = session.startedAt
+        ? differenceInMinutes(endedAt, session.startedAt)
+        : 0;
+
       const updated = await prisma.routerSession.update({
         where: { id: session.id },
         data: {
           endedAt,
+          logoutTime: endedAt, // ✅ Added
           status: "INACTIVE",
+          duration: durationMinutes, // ✅ Added (in minutes)
         },
       });
 
-      console.log(`✅ Session ended for user ${session.user.username}`);
+      console.log(
+        `✅ Session ended for user ${session.user.username} (Duration: ${durationMinutes} minutes)`
+      );
       return updated;
     } catch (error) {
-      // Even if MikroTik removal fails, mark session as inactive
-      if (error.message === "Session not found") {
-        throw error;
-      }
+      if (error.message === "Session not found") throw error;
 
       console.error(
         "Error ending session, marking as inactive anyway:",
         error.message
       );
 
-      const whereClause = {};
+      const whereClause = { endedAt: null };
       if (userId) whereClause.userId = userId;
       if (macAddress) whereClause.macAddress = macAddress;
-      whereClause.endedAt = null;
 
       const session = await prisma.routerSession.findFirst({
         where: whereClause,
@@ -370,16 +457,24 @@ export const RouterSessionManager = {
 
       if (session) {
         const endedAt = new Date();
+        const durationMinutes = session.startedAt
+          ? differenceInMinutes(endedAt, session.startedAt)
+          : 0;
+
         return await prisma.routerSession.update({
           where: { id: session.id },
           data: {
             endedAt,
+            logoutTime: endedAt,
             status: "INACTIVE",
+            duration: durationMinutes,
           },
         });
       }
 
       throw error;
+    } finally {
+      closeMikrotik(client);
     }
   },
 
@@ -389,16 +484,15 @@ export const RouterSessionManager = {
   endAllUserSessions: async (userId) => {
     try {
       const sessions = await prisma.routerSession.findMany({
-        where: {
-          userId,
-          endedAt: null,
-        },
+        where: { userId, endedAt: null },
       });
 
       const results = [];
       for (const session of sessions) {
         try {
-          const result = await this.end({ userId: session.userId });
+          const result = await RouterSessionManager.end({
+            userId: session.userId,
+          });
           results.push(result);
         } catch (err) {
           console.error(`Failed to end session ${session.id}:`, err.message);
@@ -416,7 +510,6 @@ export const RouterSessionManager = {
    */
   cleanupExpiredSessions: async () => {
     try {
-      // Find all active sessions with expired subscriptions
       const expiredSessions = await prisma.routerSession.findMany({
         where: {
           status: "ACTIVE",
@@ -430,7 +523,9 @@ export const RouterSessionManager = {
       const results = [];
       for (const session of expiredSessions) {
         try {
-          const result = await this.end({ userId: session.userId });
+          const result = await RouterSessionManager.end({
+            userId: session.userId,
+          });
           results.push(result);
         } catch (err) {
           console.error(
