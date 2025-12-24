@@ -148,3 +148,14 @@ export const getProfile = async (req, res, next) => {
     next(error);
   }
 };
+
+export const listUsers = async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      include: { subscriptions: true, payments: true },
+    });
+    res.status(200).json({ success: true, users });
+  } catch (error) {
+    next(error);
+  }
+};
