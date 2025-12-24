@@ -343,24 +343,31 @@ export const listPayments = async (req, res, next) => {
   try {
     const { search, limit = 50, offset = 0 } = req.query;
 
+    // Build where clause
+    const where = {};
+
     if (search) {
       where.OR = [
         { user: { phone: { contains: search } } },
         { plan: { name: { contains: search } } },
         { mpesaCode: { contains: search } },
-        { createdAt: { contains: search } },
       ];
     }
+
     const payments = await prisma.payment.findMany({
+      where,
       include: {
-        user: { select: { phone: true } },
-        plan: true,
+        user: { select: { phone: true, deviceName: true } },
+        plan: { select: { name: true, price: true } },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { transactionDate: "desc" }, // Use transactionDate instead of createdAt
+      take: parseInt(limit),
+      skip: parseInt(offset),
     });
 
-    res.status(200).json(payments);
+    res.status(200).json({ success: true, data: payments });
   } catch (error) {
+    console.error("List payments error:", error);
     next(error);
   }
 };

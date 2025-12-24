@@ -2,7 +2,7 @@
 import prisma from "../config/db.js";
 import crypto from "crypto";
 import { addHours, addDays, addWeeks, addMonths } from "date-fns";
-import { RouterSessionManager } from "./RouterSessionManager.js";
+import { RouterSessionManager } from "./routerSessionService.js";
 
 // Helper to generate unique voucher code
 const generateVoucherCode = () => {
