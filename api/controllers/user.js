@@ -139,7 +139,7 @@ export const loginUser = async (req, res, next) => {
 export const getProfile = async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
+      where: { id: parseInt(req.params.id, 10) },
       include: { subscriptions: true, payments: true },
     });
 
