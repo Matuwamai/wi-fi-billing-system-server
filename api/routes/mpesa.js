@@ -11,6 +11,6 @@ const router = express.Router();
 router.post("/pay", startPayment);
 router.post("/callback", handleCallback);
 router.get("/", listPayments);
-router.get("/:paymentId", getPaymentDetails);
+router.get("/:id", getPaymentDetails);
 
 export default router;
