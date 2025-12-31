@@ -9,12 +9,12 @@ import {
   getPaymentMethodsAnalytics,
   getUserDeviceStats,
 } from "../controllers/analytics.js";
-import { authenticate, authorize } from "../middleware/auth.js";
+import { authenticate } from "../middlewares/auth.js";
 
 const router = express.Router();
 
 // All routes require authentication and admin role
-router.use(authenticate, authorize(["admin"]));
+router.use(authenticate);
 
 // Dashboard overview
 router.get("/dashboard", getDashboardAnalytics);

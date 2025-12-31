@@ -10,6 +10,7 @@ import mpeasaRoutes from "./routes/mpesa.js";
 import routerSessionRoutes from "./routes/routerSession.js";
 import voucherRouetes from "./routes/voucher.js";
 import autRoutes from "./routes/auth.js";
+import analyticRoute from "./routes/analytics.js";
 import logger from "./utils/logger.js";
 
 dotenv.config();
@@ -31,6 +32,7 @@ app.use("/api/session", routerSessionRoutes);
 app.use("/api/mpesa", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);
 app.use("/api/auth", autRoutes);
+app.use("/api/analytics", analyticRoute);
 
 // Error handler
 app.use(errorHandler);
