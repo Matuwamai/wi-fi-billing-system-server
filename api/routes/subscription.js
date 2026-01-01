@@ -6,7 +6,7 @@ import {
   getAllSubscriptions,
   checkAndExpireSubscriptions,
 } from "../controllers/subscription.js";
-import { authenticate } from "../middlewares/auth.js";
+import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();
 
@@ -14,9 +14,9 @@ const router = express.Router();
 router.post("/", authenticate, createSubscription);
 router.get("/my", authenticate, getUserSubscriptions);
 router.get("/user", authenticate, getUserSubscriptions);
-router.get("/all", getAllSubscriptions);
+router.get("/all", authenticate, authorizeRoles("ADMIN"), getAllSubscriptions);
 // Admin routes
-router.get("/", authenticate, getAllSubscriptions);
+router.get("/", authenticate, authorizeRoles("ADMIN"), getAllSubscriptions);
 router.put("/check-expiry", authenticate, checkAndExpireSubscriptions);
 
 export default router;

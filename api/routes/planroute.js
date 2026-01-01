@@ -12,8 +12,8 @@ const router = express.Router();
 
 router.get("/", getPlans);
 router.post("/", authenticate, authorizeRoles("ADMIN"), createPlan);
-router.get("/:id", getPlanById);
-router.put("/:id", updatePlan);
-router.delete("/:id", deletePlan);
+router.get("/:id", authenticate, getPlanById);
+router.put("/:id", authenticate, authorizeRoles("ADMIN"), updatePlan);
+router.delete("/:id", authenticate, authorizeRoles("ADMIN"), deletePlan);
 
 export default router;

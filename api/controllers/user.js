@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import prisma from "../config/db.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -117,7 +118,9 @@ export const loginUser = async (req, res, next) => {
         .json({ success: false, message: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
     res.status(200).json({
       success: true,
@@ -127,6 +130,7 @@ export const loginUser = async (req, res, next) => {
         phone: user.phone,
         macAddress: user.macAddress,
         isGuest: user.isGuest,
+        UserRole: user.role,
       },
       token,
     });

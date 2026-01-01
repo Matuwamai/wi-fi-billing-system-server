@@ -1,6 +1,7 @@
 // routes/voucher.routes.js
 import express from "express";
 import { VoucherManager } from "../services/VoucherManager.js";
+import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();
 
@@ -9,43 +10,48 @@ const router = express.Router();
  * POST /api/vouchers/create
  * Body: { planId, quantity, expiresInDays, adminId }
  */
-router.post("/create", async (req, res) => {
-  try {
-    const { planId, quantity = 1, expiresInDays = 30, adminId } = req.body;
+router.post(
+  "/create",
+  authenticate,
+  authorizeRoles("ADMIN"),
+  async (req, res) => {
+    try {
+      const { planId, quantity = 1, expiresInDays = 30, adminId } = req.body;
 
-    if (!planId) {
-      return res.status(400).json({
+      if (!planId) {
+        return res.status(400).json({
+          success: false,
+          message: "Plan ID is required",
+        });
+      }
+
+      console.log(`📝 Creating ${quantity} voucher(s) for plan ${planId}`);
+
+      const vouchers = await VoucherManager.createVoucher({
+        planId: parseInt(planId),
+        quantity: parseInt(quantity),
+        expiresInDays: parseInt(expiresInDays),
+        adminId: adminId ? parseInt(adminId) : null,
+      });
+
+      res.json({
+        success: true,
+        message: `${vouchers.length} voucher(s) created successfully`,
+        vouchers: vouchers.map((v) => ({
+          code: v.code,
+          plan: v.plan.name,
+          expiresAt: v.expiresAt,
+        })),
+      });
+    } catch (error) {
+      console.error("❌ Create voucher error:", error.message);
+      res.status(500).json({
         success: false,
-        message: "Plan ID is required",
+        message: error.message || "Failed to create voucher",
       });
     }
-
-    console.log(`📝 Creating ${quantity} voucher(s) for plan ${planId}`);
-
-    const vouchers = await VoucherManager.createVoucher({
-      planId: parseInt(planId),
-      quantity: parseInt(quantity),
-      expiresInDays: parseInt(expiresInDays),
-      adminId: adminId ? parseInt(adminId) : null,
-    });
-
-    res.json({
-      success: true,
-      message: `${vouchers.length} voucher(s) created successfully`,
-      vouchers: vouchers.map((v) => ({
-        code: v.code,
-        plan: v.plan.name,
-        expiresAt: v.expiresAt,
-      })),
-    });
-  } catch (error) {
-    console.error("❌ Create voucher error:", error.message);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to create voucher",
-    });
   }
-});
+);
 
 /**
  * User: Check voucher validity
@@ -121,7 +127,7 @@ router.post("/redeem", async (req, res) => {
  * Admin: List all vouchers
  * GET /api/vouchers/list?status=UNUSED&planId=1&page=1&limit=50
  */
-router.get("/list", async (req, res) => {
+router.get("/list", authenticate, authorizeRoles("ADMIN"), async (req, res) => {
   try {
     const { status, planId, page = 1, limit = 50 } = req.query;
 
@@ -149,49 +155,59 @@ router.get("/list", async (req, res) => {
  * Admin: Delete voucher
  * DELETE /api/vouchers/:id
  */
-router.delete("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
+router.delete(
+  "/:id",
+  authenticate,
+  authorizeRoles("ADMIN"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
 
-    if (!id) {
-      return res.status(400).json({
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: "Voucher ID is required",
+        });
+      }
+
+      const result = await VoucherManager.deleteVoucher(parseInt(id));
+
+      res.json(result);
+    } catch (error) {
+      console.error("❌ Delete voucher error:", error.message);
+      res.status(400).json({
         success: false,
-        message: "Voucher ID is required",
+        message: error.message || "Failed to delete voucher",
       });
     }
-
-    const result = await VoucherManager.deleteVoucher(parseInt(id));
-
-    res.json(result);
-  } catch (error) {
-    console.error("❌ Delete voucher error:", error.message);
-    res.status(400).json({
-      success: false,
-      message: error.message || "Failed to delete voucher",
-    });
   }
-});
+);
 
 /**
  * Admin: Manually expire old vouchers
  * POST /api/vouchers/expire
  */
-router.post("/expire", async (req, res) => {
-  try {
-    const result = await VoucherManager.expireVouchers();
+router.post(
+  "/expire",
+  authenticate,
+  authorizeRoles("ADMIN"),
+  async (req, res) => {
+    try {
+      const result = await VoucherManager.expireVouchers();
 
-    res.json({
-      success: true,
-      message: `Expired ${result.count} vouchers`,
-      count: result.count,
-    });
-  } catch (error) {
-    console.error("❌ Expire vouchers error:", error.message);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to expire vouchers",
-    });
+      res.json({
+        success: true,
+        message: `Expired ${result.count} vouchers`,
+        count: result.count,
+      });
+    } catch (error) {
+      console.error("❌ Expire vouchers error:", error.message);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to expire vouchers",
+      });
+    }
   }
-});
+);
 
 export default router;
