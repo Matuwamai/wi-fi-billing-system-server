@@ -197,6 +197,7 @@ export const RouterSessionManager = {
         });
 
         console.log("✅ Hotspot user added successfully");
+        return { message: "Hotspot user added successfully" };
       } catch (userError) {
         console.error("❌ Hotspot user operation failed:", userError.message);
 

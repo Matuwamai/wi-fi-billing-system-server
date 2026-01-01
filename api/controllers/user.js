@@ -8,9 +8,9 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 //  Create Guest User (auto-generated for short-time users)
 export const createGuestUser = async (req, res, next) => {
   try {
-    const { deviceId } = req.body;
+    const { deviceIdName, phone } = req.body;
 
-    if (!deviceId) {
+    if (!deviceIdName) {
       return res
         .status(400)
         .json({ success: false, message: "Device ID is required" });
