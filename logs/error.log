@@ -1,0 +1,10 @@
+[2026-01-02 09:03:46] error: STK push error: 
+Invalid `prisma.user.update()` invocation:
+
+
+Unique constraint failed on the constraint: `User_macAddress_key`
+[2026-01-02 09:03:54] error: STK push error: 
+Invalid `prisma.user.update()` invocation:
+
+
+Unique constraint failed on the constraint: `User_macAddress_key`

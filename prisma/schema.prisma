@@ -12,7 +12,7 @@ datasource db {
 model User {
   id             Int             @id @default(autoincrement())
   phone          String?         @unique // Make it nullable with ?
-  macAddress     String?         @unique
+  macAddress     String?
   password       String?
   username       String?         @unique // Add username field
   deviceName     String?
