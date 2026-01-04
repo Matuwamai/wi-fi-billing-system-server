@@ -8,3 +8,4 @@ Invalid `prisma.user.update()` invocation:
 
 
 Unique constraint failed on the constraint: `User_macAddress_key`
+[2026-01-04 09:43:55] error: Callback error: Cannot set headers after they are sent to the client

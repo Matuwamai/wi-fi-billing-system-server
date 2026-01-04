@@ -276,6 +276,7 @@ export const initiatePayment = async (req, res) => {
 export const handleCallback = async (req, res) => {
   try {
     const { Body } = req.body;
+    console.log("📥 STK Callback received:", JSON.stringify(Body));
     if (!Body?.stkCallback) return res.sendStatus(400);
 
     const callback = Body.stkCallback;
@@ -305,7 +306,7 @@ export const handleCallback = async (req, res) => {
     // ✅ Skip if already processed
     if (payment.status === "SUCCESS") {
       logger.info(`🔁 Payment ${payment.id} already processed`);
-      return res.sendStatus(200);
+      return res.status(200).json;
     }
 
     // ✅ Update payment
