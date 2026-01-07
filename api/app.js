@@ -11,6 +11,7 @@ import routerSessionRoutes from "./routes/routerSession.js";
 import voucherRouetes from "./routes/voucher.js";
 import autRoutes from "./routes/auth.js";
 import analyticRoute from "./routes/analytics.js";
+import mikrotikRoutes from "./routes/mikrotik.js"; // ADD THIS
 import logger from "./utils/logger.js";
 
 dotenv.config();
@@ -19,12 +20,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Routes
 // Log every request
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.url}`);
   next();
 });
+
+// Routes
 app.use("/api/plans", planRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
@@ -33,6 +35,7 @@ app.use("/api/mpesa", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);
 app.use("/api/auth", autRoutes);
 app.use("/api/analytics", analyticRoute);
+app.use("/api/mikrotik", mikrotikRoutes); // ADD THIS
 
 // Error handler
 app.use(errorHandler);

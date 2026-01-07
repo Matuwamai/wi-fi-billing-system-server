@@ -1,64 +1,128 @@
-// Add this to your Express server
+import prisma from "../config/db.js";
+import logger from "../utils/logger.js";
 
-// GET endpoint for MikroTik to fetch active users
-app.get("/api/mikrotik/sync", async (req, res) => {
+// Middleware to validate MikroTik API key
+const validateMikroTikKey = (req, res, next) => {
+  const apiKey = req.headers["x-api-key"];
+
+  if (!process.env.MIKROTIK_SYNC_KEY) {
+    logger.error("MIKROTIK_SYNC_KEY not set in environment variables");
+    return res.status(500).json({ error: "Server configuration error" });
+  }
+
+  if (apiKey !== process.env.MIKROTIK_SYNC_KEY) {
+    logger.warn(`Unauthorized MikroTik sync attempt from ${req.ip}`);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  next();
+};
+
+/**
+ * GET /api/mikrotik/sync-simple
+ * Simple text format for RouterOS script parsing
+ * Format: username|password|profile|comment (one per line)
+ */
+router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
   try {
-    // Validate request (optional but recommended)
-    const apiKey = req.headers["x-api-key"];
-    if (apiKey !== process.env.MIKROTIK_SYNC_KEY) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    logger.info("MikroTik requesting user sync (simple format)");
 
-    // Get all active subscriptions with user details
-    const activeUsers = await new Promise((resolve, reject) => {
-      db.all(
-        `
-        SELECT 
-          u.username,
-          u.email,
-          u.phone,
-          s.expires_at,
-          p.name as plan_name,
-          p.speed_limit,
-          p.data_limit_mb,
-          p.time_limit_hours
-        FROM subscriptions s
-        JOIN users u ON s.user_id = u.id
-        JOIN plans p ON s.plan_id = p.id
-        WHERE s.status = 'active'
-          AND (s.expires_at IS NULL OR s.expires_at > datetime('now'))
-      `,
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
+    // Get all active subscriptions with user and plan details
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        status: "ACTIVE",
+        endTime: {
+          gt: new Date(), // Greater than current time
+        },
+      },
+      include: {
+        user: true,
+        plan: true,
+      },
     });
 
-    // Format response for MikroTik
-    const users = activeUsers.map((user) => ({
-      username: user.username,
-      password: user.username, // or generate from phone/email
-      profile: user.plan_name.replace(/\s+/g, "-").toLowerCase(),
-      comment: `${user.email || user.phone} - Expires: ${
-        user.expires_at || "Never"
-      }`,
-      // Optional rate limiting
-      rate_limit: user.speed_limit
-        ? `${user.speed_limit}M/${user.speed_limit}M`
-        : null,
-      uptime_limit: user.time_limit_hours ? `${user.time_limit_hours}h` : null,
-    }));
+    // Format: username|password|profile|comment
+    const lines = activeSubscriptions.map((sub) => {
+      const user = sub.user;
+      const plan = sub.plan;
 
-    console.log(`📡 MikroTik sync: ${users.length} active users`);
+      // Use username or phone as login
+      const username = user.username || user.phone || `user_${user.id}`;
+      const password = user.password || username; // Use stored password or username
+
+      // Profile name (sanitized for MikroTik)
+      const profile = plan.name.replace(/\s+/g, "-").toLowerCase();
+
+      // Comment with expiry info
+      const expiryDate = sub.endTime.toISOString().split("T")[0];
+      const comment = `${user.phone || "N/A"} Exp:${expiryDate}`;
+
+      return `${username}|${password}|${profile}|${comment}`;
+    });
+
+    logger.info(
+      `📡 Simple sync: ${lines.length} active users sent to MikroTik`
+    );
+
+    res.type("text/plain").send(lines.join("\n"));
+  } catch (error) {
+    logger.error("❌ Simple sync error:", error);
+    res.status(500).send("Sync failed");
+  }
+});
+
+/**
+ * GET /api/mikrotik/sync
+ * JSON format with detailed user information
+ */
+router.get("/sync", validateMikroTikKey, async (req, res) => {
+  try {
+    logger.info("MikroTik requesting user sync (JSON format)");
+
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        status: "ACTIVE",
+        endTime: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        user: true,
+        plan: true,
+      },
+    });
+
+    const users = activeSubscriptions.map((sub) => {
+      const user = sub.user;
+      const plan = sub.plan;
+
+      const username = user.username || user.phone || `user_${user.id}`;
+      const password = user.password || username;
+
+      return {
+        username: username,
+        password: password,
+        profile: plan.name.replace(/\s+/g, "-").toLowerCase(),
+        comment: `${user.phone || "N/A"} - Expires: ${
+          sub.endTime.toISOString().split("T")[0]
+        }`,
+        plan_name: plan.name,
+        expires_at: sub.endTime.toISOString(),
+        user_id: user.id,
+        subscription_id: sub.id,
+      };
+    });
+
+    logger.info(`📡 JSON sync: ${users.length} active users sent to MikroTik`);
 
     res.json({
       success: true,
       timestamp: new Date().toISOString(),
+      count: users.length,
       users: users,
     });
   } catch (error) {
-    console.error("❌ Sync error:", error);
+    logger.error("❌ JSON sync error:", error);
     res.status(500).json({
       success: false,
       error: "Sync failed",
@@ -66,91 +130,135 @@ app.get("/api/mikrotik/sync", async (req, res) => {
   }
 });
 
-// POST endpoint to report session events from MikroTik
-app.post("/api/mikrotik/event", async (req, res) => {
+/**
+ * POST /api/mikrotik/event
+ * Receive session events from MikroTik (login, logout, etc.)
+ */
+router.post("/event", validateMikroTikKey, async (req, res) => {
   try {
-    const { username, event, bytes_in, bytes_out, session_time } = req.body;
+    const {
+      username,
+      event,
+      mac_address,
+      ip_address,
+      bytes_in,
+      bytes_out,
+      session_time,
+    } = req.body;
 
-    console.log(`📊 Event from MikroTik: ${event} - ${username}`);
+    logger.info(`📊 MikroTik event: ${event} - User: ${username}`);
 
-    // Log the event (optional - for analytics)
-    if (event === "logout" || event === "disconnect") {
-      // Update usage statistics in your database
-      db.run(
-        `
-        INSERT INTO usage_logs (username, bytes_in, bytes_out, session_time, logged_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-      `,
-        [username, bytes_in || 0, bytes_out || 0, session_time || 0]
-      );
+    // Find user by username or phone
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ username: username }, { phone: username }],
+      },
+    });
+
+    if (!user) {
+      logger.warn(`User not found for event: ${username}`);
+      return res.json({ success: false, error: "User not found" });
+    }
+
+    // Handle different event types
+    if (event === "login") {
+      // Find active subscription
+      const subscription = await prisma.subscription.findFirst({
+        where: {
+          userId: user.id,
+          status: "ACTIVE",
+          endTime: {
+            gt: new Date(),
+          },
+        },
+      });
+
+      if (subscription) {
+        // Create router session
+        await prisma.routerSession.create({
+          data: {
+            userId: user.id,
+            planId: subscription.planId,
+            subscriptionId: subscription.id,
+            macAddress: mac_address || null,
+            ipAddress: ip_address || null,
+            status: "ACTIVE",
+            loginTime: new Date(),
+          },
+        });
+
+        logger.info(`✅ Session started for user: ${username}`);
+      }
+    } else if (event === "logout" || event === "disconnect") {
+      // Find and close active session
+      const activeSession = await prisma.routerSession.findFirst({
+        where: {
+          userId: user.id,
+          status: "ACTIVE",
+          logoutTime: null,
+        },
+        orderBy: {
+          loginTime: "desc",
+        },
+      });
+
+      if (activeSession) {
+        const duration = session_time
+          ? Math.floor(session_time / 60)
+          : Math.floor(
+              (Date.now() - activeSession.loginTime.getTime()) / 60000
+            );
+
+        await prisma.routerSession.update({
+          where: { id: activeSession.id },
+          data: {
+            status: "ENDED",
+            logoutTime: new Date(),
+            duration: duration,
+            endedAt: new Date(),
+          },
+        });
+
+        logger.info(`✅ Session ended for user: ${username} (${duration} min)`);
+      }
     }
 
     res.json({ success: true });
   } catch (error) {
-    console.error("❌ Event error:", error);
-    res.status(500).json({ success: false });
+    logger.error("❌ Event handling error:", error);
+    res.status(500).json({ success: false, error: "Event processing failed" });
   }
 });
 
-// Remove MikroTik connection code from voucher redemption
-// Old code to DELETE:
-/*
-await connectToMikroTik();
-const api = await mikrotik.connect(...);
-*/
-
-// New redemption code - just mark as active
-app.post("/api/vouchers/redeem", async (req, res) => {
+/**
+ * GET /api/mikrotik/health
+ * Health check endpoint for MikroTik to verify connectivity
+ */
+router.get("/health", validateMikroTikKey, async (req, res) => {
   try {
-    const { code, username, phone, email } = req.body;
-
-    // ... existing validation code ...
-
-    // Create user and subscription
-    const result = db.run(
-      `
-      INSERT INTO users (username, email, phone, created_at)
-      VALUES (?, ?, ?, datetime('now'))
-    `,
-      [username, email, phone]
-    );
-
-    const userId = result.lastID;
-
-    // Calculate expiry
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + voucher.duration_days);
-
-    // Create subscription
-    db.run(
-      `
-      INSERT INTO subscriptions (user_id, plan_id, status, expires_at, created_at)
-      VALUES (?, ?, 'active', ?, datetime('now'))
-    `,
-      [userId, voucher.plan_id, expiresAt.toISOString()]
-    );
-
-    // Mark voucher as used
-    db.run(
-      `
-      UPDATE vouchers 
-      SET status = 'used', used_by = ?, used_at = datetime('now')
-      WHERE id = ?
-    `,
-      [userId, voucher.id]
-    );
-
-    console.log(`✅ Voucher redeemed: ${code} - User: ${username}`);
-    console.log(`⏰ MikroTik will sync within 5 minutes`);
+    const userCount = await prisma.user.count();
+    const activeSubCount = await prisma.subscription.count({
+      where: {
+        status: "ACTIVE",
+        endTime: {
+          gt: new Date(),
+        },
+      },
+    });
 
     res.json({
-      success: true,
-      message: "Voucher redeemed! You will be connected within 5 minutes.",
-      username: username,
-      expires_at: expiresAt,
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      database: "connected",
+      total_users: userCount,
+      active_subscriptions: activeSubCount,
     });
   } catch (error) {
-    console.error("❌ Redeem error:", error);
-    res.status(500).json({ error: "Redemption failed" });
+    logger.error("❌ Health check error:", error);
+    res
+      .status(500)
+      .json({ status: "error", message: "Database connection failed" });
   }
 });
+
+export default router;

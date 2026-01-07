@@ -1,43 +1,18 @@
-import { RouterOSClient } from "routeros-client";
 import dotenv from "dotenv";
 dotenv.config();
 
-const routerConfig = {
-  host: process.env.MIKROTIK_HOST,
-  user: process.env.MIKROTIK_USER,
-  password: process.env.MIKROTIK_PASS,
-  port: Number(process.env.MIKROTIK_API_PORT) || 8728,
-  timeout: 20000, // 20 seconds
-};
+console.log("⚠️ WARNING: Direct MikroTik connection is deprecated");
+console.log("📡 MikroTik now syncs from cloud via scheduled script");
+console.log("🔗 See routes/mikrotik.js for new sync endpoints");
 
-console.log("📡 MikroTik Configuration:");
-console.log(`   Host: ${routerConfig.host}`);
-console.log(`   User: ${routerConfig.user}`);
-console.log(`   Port: ${routerConfig.port}`);
-
-/**
- * Connect to MikroTik and return connected client
- * @returns {Promise<Object>} Connected client instance
- */
+// Keep this for backward compatibility if needed
 export const connectMikroTik = async () => {
-  if (!routerConfig.host || !routerConfig.user) {
-    throw new Error(
-      "MikroTik configuration is incomplete. Check your .env file."
-    );
-  }
-
-  try {
-    const client = new RouterOSClient(routerConfig);
-    const connectedClient = await client.connect();
-    console.log("✅ Connected to MikroTik");
-    return connectedClient;
-  } catch (error) {
-    console.error("❌ Failed to connect to MikroTik:", error.message);
-    throw error;
-  }
+  throw new Error(
+    "Direct MikroTik connection is deprecated. Use cloud sync instead. " +
+      "MikroTik pulls data from /api/mikrotik/sync-simple every 5 minutes."
+  );
 };
 
 export default {
   connectMikroTik,
-  config: routerConfig,
 };

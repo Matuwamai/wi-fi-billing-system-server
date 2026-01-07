@@ -1,28 +1,15 @@
-// Based on your screenshot, these columns appear empty in RouterSession:
-// - ipAddress
-// - loginTime
-// - logoutTime
-// - duration
-// - macAddress (in session table, not user table)
-
-// Here's the updated RouterSessionManager with proper data population:
-
 import prisma from "../config/db.js";
 import { connectMikroTik } from "./mikrotik.js";
 import { differenceInMinutes } from "date-fns";
-
 const generateUsername = (phone) => {
   return `user_${phone.replace(/\D/g, "")}`;
 };
-
 const generatePassword = () => {
   return Math.random().toString(36).slice(-8);
 };
-
 const getItemId = (item) => {
   return item[".id"] || item.id || item[".id*"] || null;
 };
-
 const closeMikrotik = (client) => {
   if (!client) return;
   try {
@@ -36,7 +23,6 @@ const closeMikrotik = (client) => {
     console.warn("⚠️ Failed to close MikroTik connection:", e.message);
   }
 };
-
 export const RouterSessionManager = {
   /**
    * Automatically start session after subscription creation
@@ -156,22 +142,17 @@ export const RouterSessionManager = {
         console.log("⚠️  Falling back to 'default' profile");
         profileName = "default";
       }
-
       console.log(`👤 Syncing hotspot user "${username}"...`);
-
       try {
         const hotspotMenu = client.menu("/ip/hotspot/user");
 
         console.log("🔍 Checking for existing user...");
         const allUsers = await hotspotMenu.getAll();
         console.log(`📋 Found ${allUsers.length} total hotspot users`);
-
         const existingUser = allUsers.find((u) => u.name === username);
-
         if (existingUser) {
           const userId = getItemId(existingUser);
           console.log(`♻️ Found existing user "${username}" (ID: ${userId})`);
-
           if (userId) {
             try {
               console.log(`🗑️ Removing existing user...`);
@@ -186,7 +167,6 @@ export const RouterSessionManager = {
         } else {
           console.log("ℹ️ No existing user found with this username");
         }
-
         console.log("➕ Adding hotspot user...");
         await hotspotMenu.add({
           name: username,
@@ -195,12 +175,10 @@ export const RouterSessionManager = {
           ...(macAddress && { "mac-address": macAddress }),
           comment: `Sub_${subscriptionId}`,
         });
-
         console.log("✅ Hotspot user added successfully");
         return { message: "Hotspot user added successfully" };
       } catch (userError) {
         console.error("❌ Hotspot user operation failed:", userError.message);
-
         if (
           userError.message &&
           userError.message.includes("already have user")
@@ -352,7 +330,6 @@ export const RouterSessionManager = {
       closeMikrotik(client);
     }
   },
-
   /**
    * Manual session start (for existing subscriptions)
    */
@@ -478,7 +455,6 @@ export const RouterSessionManager = {
       closeMikrotik(client);
     }
   },
-
   /**
    * End all sessions for a user
    */
