@@ -1,6 +1,8 @@
 import prisma from "../config/db.js";
 import logger from "../utils/logger.js";
+import express from "express";
 
+const router = express.Router();
 // Middleware to validate MikroTik API key
 const validateMikroTikKey = (req, res, next) => {
   const apiKey = req.headers["x-api-key"];
