@@ -311,5 +311,51 @@ router.get("/health", validateMikroTikKey, async (req, res) => {
       .json({ status: "error", message: "Database connection failed" });
   }
 });
+/**
+ * GET /api/mikrotik/expired
+ * Get list of users to disable (expired subscriptions)
+ */
+router.get("/expired", validateMikroTikKey, async (req, res) => {
+  try {
+    // Get subscriptions that expired in the last hour
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+    const expiredSubscriptions = await prisma.subscription.findMany({
+      where: {
+        OR: [
+          { status: "EXPIRED" },
+          {
+            status: "ACTIVE",
+            endTime: {
+              lt: new Date(), // Already expired
+              gt: oneHourAgo, // In the last hour
+            },
+          },
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            username: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    // Format: username|expiry_time|subscription_id
+    const lines = expiredSubscriptions.map((sub) => {
+      const username =
+        sub.user.username || sub.user.phone || `user_${sub.userId}`;
+      const expiryTime = sub.endTime.toISOString();
+      return `${username}|${expiryTime}|${sub.id}`;
+    });
+
+    res.type("text/plain").send(lines.join("\n"));
+  } catch (error) {
+    logger.error("❌ Expired users sync error:", error);
+    res.status(500).send("Error fetching expired users");
+  }
+});
 
 export default router;
