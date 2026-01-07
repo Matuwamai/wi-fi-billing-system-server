@@ -25,32 +25,64 @@ const validateMikroTikKey = (req, res, next) => {
  * Simple text format for RouterOS script parsing
  * Format: username|password|profile|comment (one per line)
  */
+// Add this optimized version with caching
 router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
   try {
     logger.info("MikroTik requesting user sync (simple format)");
 
-    // Get all active subscriptions with user and plan details
+    // Get query parameters for optimization
+    const lastSync = req.query.last_sync; // Optional: timestamp of last sync
+    const routerId = req.query.router_id; // Optional: identify which router
+
+    // Get only active subscriptions
     const activeSubscriptions = await prisma.subscription.findMany({
       where: {
         status: "ACTIVE",
         endTime: {
-          gt: new Date(), // Greater than current time
+          gt: new Date(),
         },
+        // Optional: Only get modified since last sync
+        ...(lastSync && {
+          OR: [
+            { updatedAt: { gt: new Date(lastSync) } },
+            { user: { updatedAt: { gt: new Date(lastSync) } } },
+          ],
+        }),
       },
       include: {
-        user: true,
-        plan: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            phone: true,
+            password: true,
+            macAddress: true,
+          },
+        },
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            speedLimit: true,
+            dataLimit: true,
+          },
+        },
+      },
+      orderBy: {
+        user: {
+          username: "asc",
+        },
       },
     });
 
-    // Format: username|password|profile|comment
+    // Format: username|password|profile|comment|mac_address|data_limit|speed_limit
     const lines = activeSubscriptions.map((sub) => {
       const user = sub.user;
       const plan = sub.plan;
 
       // Use username or phone as login
       const username = user.username || user.phone || `user_${user.id}`;
-      const password = user.password || username; // Use stored password or username
+      const password = user.password || username;
 
       // Profile name (sanitized for MikroTik)
       const profile = plan.name.replace(/\s+/g, "-").toLowerCase();
@@ -59,17 +91,34 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
       const expiryDate = sub.endTime.toISOString().split("T")[0];
       const comment = `${user.phone || "N/A"} Exp:${expiryDate}`;
 
-      return `${username}|${password}|${profile}|${comment}`;
+      // Additional data for MikroTik
+      const macAddress = user.macAddress || "";
+      const dataLimit = plan.dataLimit ? `${plan.dataLimit}MB` : "";
+      const speedLimit = plan.speedLimit || "";
+
+      return `${username}|${password}|${profile}|${comment}|${macAddress}|${dataLimit}|${speedLimit}`;
     });
 
+    // Add header with sync info for debugging
+    const syncInfo =
+      `# Sync: ${new Date().toISOString()}\n` +
+      `# Count: ${lines.length}\n` +
+      `# Router: ${routerId || "unknown"}\n`;
+
     logger.info(
-      `📡 Simple sync: ${lines.length} active users sent to MikroTik`
+      `📡 Simple sync: ${lines.length} active users sent to MikroTik ${
+        routerId ? `(Router: ${routerId})` : ""
+      }`
     );
 
-    res.type("text/plain").send(lines.join("\n"));
+    res
+      .type("text/plain")
+      .set("X-Sync-Timestamp", new Date().toISOString())
+      .set("X-Total-Users", lines.length)
+      .send(syncInfo + lines.join("\n"));
   } catch (error) {
     logger.error("❌ Simple sync error:", error);
-    res.status(500).send("Sync failed");
+    res.status(500).send("# ERROR: Sync failed\n");
   }
 });
 
