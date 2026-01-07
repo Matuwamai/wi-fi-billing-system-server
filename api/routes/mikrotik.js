@@ -357,5 +357,43 @@ router.get("/expired", validateMikroTikKey, async (req, res) => {
     res.status(500).send("Error fetching expired users");
   }
 });
+/**
+ * GET /api/mikrotik/stats
+ * Get synchronization statistics
+ */
+router.get("/stats", validateMikroTikKey, async (req, res) => {
+  try {
+    const [totalUsers, activeSubscriptions, activeSessions, lastSyncLogs] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.subscription.count({
+          where: {
+            status: "ACTIVE",
+            endTime: { gt: new Date() },
+          },
+        }),
+        prisma.routerSession.count({
+          where: { status: "ACTIVE", endedAt: null },
+        }),
+        prisma.syncLog.findMany({
+          take: 10,
+          orderBy: { createdAt: "desc" },
+        }),
+      ]);
 
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      stats: {
+        totalUsers,
+        activeSubscriptions,
+        activeSessions,
+      },
+      recentSyncs: lastSyncLogs,
+    });
+  } catch (error) {
+    logger.error("❌ Stats error:", error);
+    res.status(500).json({ success: false, error: "Failed to get stats" });
+  }
+});
 export default router;
