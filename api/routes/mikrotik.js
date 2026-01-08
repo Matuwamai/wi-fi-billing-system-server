@@ -87,18 +87,79 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
       const username = user.username || user.phone || `user_${user.id}`;
       const password = user.password || username;
 
-      // Profile name (sanitized for MikroTik)
-      const profile = plan.name.replace(/\s+/g, "-").toLowerCase();
+      // Profile name mapping to MikroTik user profiles
+      // Map common plan names to MikroTik profile names
+      const profileMap = {
+        // Hourly plans
+        "1 hour": "1hour",
+        "1-hour": "1hour",
+        hourly: "1hour",
+        "1h": "1hour",
+
+        // Daily plans
+        "1 day": "1day",
+        "1-day": "1day",
+        daily: "1day",
+        "24h": "1day",
+
+        // Weekly plans
+        "1 week": "1week",
+        "1-week": "1week",
+        weekly: "1week",
+        "7 days": "1week",
+        "7-days": "1week",
+
+        "2 weeks": "2weeks",
+        "2-weeks": "2weeks",
+        "14 days": "2weeks",
+        "14-days": "2weeks",
+
+        "3 weeks": "3weeks",
+        "3-weeks": "3weeks",
+        "21 days": "3weeks",
+        "21-days": "3weeks",
+
+        // Monthly plans
+        "1 month": "1month",
+        "1-month": "1month",
+        monthly: "1month",
+        "30 days": "1month",
+        "30-days": "1month",
+
+        // Default fallback
+        default: "1hour",
+      };
+
+      // Normalize plan name for mapping
+      const planName = plan.name.toLowerCase().trim();
+
+      // Get profile from map or use original name (sanitized)
+      let profile = profileMap[planName];
+
+      if (!profile) {
+        // Try to match with contains logic
+        for (const [key, value] of Object.entries(profileMap)) {
+          if (planName.includes(key) || key.includes(planName)) {
+            profile = value;
+            break;
+          }
+        }
+
+        // If still no match, use sanitized version
+        if (!profile) {
+          profile = plan.name
+            .replace(/\s+/g, "")
+            .replace(/-/g, "")
+            .toLowerCase();
+        }
+      }
 
       // Comment with expiry info
       const expiryDate = sub.endTime.toISOString().split("T")[0];
       const comment = `${user.phone || "N/A"} Exp:${expiryDate}`;
 
-      // Additional data for MikroTik
-      const macAddress = user.macAddress || "";
-      const dataLimit = plan.dataLimit ? `${plan.dataLimit}MB` : "";
-      const speedLimit = plan.speedLimit || "";
       // Add logging before returning
+      console.log("Plan name:", plan.name);
       console.log("Profile being sent:", profile);
       console.log("Full line:", `${username}|${password}|${profile}`);
 
