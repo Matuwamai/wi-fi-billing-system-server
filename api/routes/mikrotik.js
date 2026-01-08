@@ -98,6 +98,9 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
       const macAddress = user.macAddress || "";
       const dataLimit = plan.dataLimit ? `${plan.dataLimit}MB` : "";
       const speedLimit = plan.speedLimit || "";
+      // Add logging before returning
+      console.log("Profile being sent:", profile);
+      console.log("Full line:", `${username}|${password}|${profile}`);
 
       return `${username}|${password}|${profile}`;
     });
