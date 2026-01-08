@@ -6,13 +6,16 @@ const router = express.Router();
 // Middleware to validate MikroTik API key
 const validateMikroTikKey = (req, res, next) => {
   const apiKey = req.headers["x-api-key"];
+  const MIKROTIK_SYNC_KEY =
+    process.env.MIKROTIK_SYNC_KEY ||
+    "wertyuiopp9876tgvcxsertgvcxzawq2345677777777777";
 
-  if (!process.env.MIKROTIK_SYNC_KEY) {
+  if (!MIKROTIK_SYNC_KEY) {
     logger.error("MIKROTIK_SYNC_KEY not set in environment variables");
     return res.status(500).json({ error: "Server configuration error" });
   }
 
-  if (apiKey !== process.env.MIKROTIK_SYNC_KEY) {
+  if (apiKey !== MIKROTIK_SYNC_KEY) {
     logger.warn(`Unauthorized MikroTik sync attempt from ${req.ip}`);
     return res.status(401).json({ error: "Unauthorized" });
   }
