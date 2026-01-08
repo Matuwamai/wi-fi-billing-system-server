@@ -63,8 +63,8 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
           select: {
             id: true,
             name: true,
-            speedLimit: true,
-            dataLimit: true,
+            durationType: true,
+            durationValue: true,
           },
         },
       },
