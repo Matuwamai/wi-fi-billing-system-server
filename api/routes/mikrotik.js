@@ -99,7 +99,7 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
       const dataLimit = plan.dataLimit ? `${plan.dataLimit}MB` : "";
       const speedLimit = plan.speedLimit || "";
 
-      return `${username}|${password}|${profile}|${comment}|${macAddress}|${dataLimit}|${speedLimit}`;
+      return `${username}|${password}|${profile}`;
     });
 
     // Add header with sync info for debugging
