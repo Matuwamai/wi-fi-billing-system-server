@@ -463,4 +463,58 @@ router.get("/stats", validateMikroTikKey, async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to get stats" });
   }
 });
+
+//  * NEW ENDPOINT: Get MAC address bypass list
+//  * MikroTik will add these MACs to bypass list for automatic login
+//  */
+router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
+  try {
+    logger.info("MikroTik requesting MAC bypass list");
+
+    // Get all active subscriptions with MAC addresses
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        status: "ACTIVE",
+        endTime: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        user: {
+          select: {
+            username: true,
+            macAddress: true,
+            phone: true,
+          },
+        },
+        plan: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Filter only users with MAC addresses
+    const macList = activeSubscriptions
+      .filter((sub) => sub.user.macAddress)
+      .map((sub) => ({
+        mac: sub.user.macAddress,
+        username: sub.user.username || sub.user.phone || `user_${sub.userId}`,
+        comment: `Auto-login: ${sub.plan.name}`,
+      }));
+
+    logger.info(`📡 MAC bypass list: ${macList.length} devices`);
+
+    // Return simple text format: MAC|username|comment
+    const lines = macList.map(
+      (item) => `${item.mac}|${item.username}|${item.comment}`
+    );
+
+    res.type("text/plain").send(lines.join("\n"));
+  } catch (error) {
+    logger.error("❌ MAC bypass error:", error);
+    res.status(500).send("Error");
+  }
+});
 export default router;
