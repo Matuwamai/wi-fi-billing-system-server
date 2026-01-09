@@ -506,6 +506,11 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
 
     logger.info(`📡 MAC bypass list: ${macList.length} devices`);
 
+    // Log each MAC address for debugging
+    macList.forEach((item, index) => {
+      logger.info(`[${index + 1}] MAC: ${item.mac} | User: ${item.username}`);
+    });
+
     // Return simple text format: MAC|username|comment
     const lines = macList.map(
       (item) => `${item.mac}|${item.username}|${item.comment}`
