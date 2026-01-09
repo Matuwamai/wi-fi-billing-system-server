@@ -108,7 +108,7 @@ router.post("/redeem", async (req, res) => {
     const result = await VoucherManager.redeemVoucher({
       voucherCode,
       phone,
-      macAddress,
+      macAddress: null,
       ipAddress,
       deviceName,
     });
