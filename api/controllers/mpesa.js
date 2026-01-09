@@ -194,7 +194,7 @@ export const startPayment = async (req, res) => {
 // paymentController.js or mpesaController.js
 export const initiatePayment = async (req, res) => {
   try {
-    const { phone, userId, planId, macAddress, deviceName } = req.body;
+    const { phone, userId, planId, deviceName } = req.body;
 
     console.log("Payment request:", {
       phone,
@@ -214,16 +214,18 @@ export const initiatePayment = async (req, res) => {
 
     // Update user with MAC address and device name if provided
     if (macAddress || deviceName) {
-      await prisma.user.update({
+      // In your user creation logic
+      const user = await prisma.user.update({
         where: { id: userId },
         data: {
-          ...(macAddress && { macAddress }),
-          ...(deviceName && { deviceName }),
+          username: generatedUsername,
+          password: generatePassword(),
+          phone: null,
+          macAddress: null, // Start NULL
+          isGuest: true,
+          status: "ACTIVE",
         },
       });
-      console.log(
-        `✅ User ${userId} updated with MAC: ${macAddress}, Device: ${deviceName}`
-      );
     }
 
     // Create payment record

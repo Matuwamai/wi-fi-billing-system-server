@@ -158,7 +158,7 @@ export const VoucherManager = {
         user = await prisma.user.create({
           data: {
             phone,
-            macAddress,
+            macAddress: null,
             deviceName,
             isGuest: true,
             status: "ACTIVE",
