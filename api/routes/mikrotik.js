@@ -471,38 +471,50 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   try {
     logger.info("MikroTik requesting MAC bypass list");
 
-    // Get all active subscriptions with MAC addresses
-    const activeSubscriptions = await prisma.subscription.findMany({
+    // Get unique users who have active subscriptions
+    const usersWithActiveSubs = await prisma.user.findMany({
       where: {
-        status: "ACTIVE",
-        endTime: {
-          gt: new Date(),
+        macAddress: {
+          not: null,
+        },
+        subscriptions: {
+          some: {
+            status: "ACTIVE",
+            endTime: {
+              gt: new Date(),
+            },
+          },
         },
       },
-      include: {
-        user: {
-          select: {
-            username: true,
-            macAddress: true,
-            phone: true,
+      select: {
+        username: true,
+        macAddress: true,
+        phone: true,
+        id: true,
+        subscriptions: {
+          where: {
+            status: "ACTIVE",
+            endTime: {
+              gt: new Date(),
+            },
           },
-        },
-        plan: {
           select: {
-            name: true,
+            plan: {
+              select: {
+                name: true,
+              },
+            },
           },
+          take: 1, // Just get one subscription for the comment
         },
       },
     });
 
-    // Filter only users with MAC addresses
-    const macList = activeSubscriptions
-      .filter((sub) => sub.user.macAddress)
-      .map((sub) => ({
-        mac: sub.user.macAddress,
-        username: sub.user.username || sub.user.phone || `user_${sub.userId}`,
-        comment: `Auto-login: ${sub.plan.name}`,
-      }));
+    const macList = usersWithActiveSubs.map((user) => ({
+      mac: user.macAddress,
+      username: user.username || user.phone || `user_${user.id}`,
+      comment: `Auto-login: ${user.subscriptions[0]?.plan.name || "Active"}`,
+    }));
 
     logger.info(`📡 MAC bypass list: ${macList.length} devices`);
 
