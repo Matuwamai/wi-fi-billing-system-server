@@ -87,7 +87,7 @@ router.get("/check/:code", async (req, res) => {
  */
 router.post("/redeem", async (req, res) => {
   try {
-    const { voucherCode, phone, macAddress, ipAddress, deviceName } = req.body;
+    const { voucherCode, phone, ipAddress, deviceName } = req.body;
 
     if (!voucherCode) {
       return res.status(400).json({
@@ -96,10 +96,10 @@ router.post("/redeem", async (req, res) => {
       });
     }
 
-    if (!macAddress) {
+    if (!deviceName) {
       return res.status(400).json({
         success: false,
-        message: "MAC address is required",
+        message: "Device name is required",
       });
     }
 

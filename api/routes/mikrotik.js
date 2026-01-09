@@ -534,4 +534,57 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
     res.status(500).send("Error");
   }
 });
+// New endpoint for MAC detection
+router.post("/detect-mac", async (req, res) => {
+  try {
+    const { username, detectedMac, ipAddress } = req.body;
+
+    console.log(`🔍 MAC detection: ${username} -> ${detectedMac}`);
+
+    // Find user
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ username }, { phone: username }],
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Update with REAL MAC
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { macAddress: detectedMac },
+    });
+
+    console.log(`✅ Updated ${username} with real MAC: ${detectedMac}`);
+
+    // Update any active subscriptions
+    const activeSub = await prisma.subscription.findFirst({
+      where: {
+        userId: user.id,
+        status: "ACTIVE",
+        endTime: { gt: new Date() },
+      },
+    });
+
+    if (activeSub) {
+      // Update router session with real MAC
+      await RouterSessionManager.updateMacAddress({
+        subscriptionId: activeSub.id,
+        macAddress: detectedMac,
+        ipAddress,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "MAC address updated",
+    });
+  } catch (error) {
+    console.error("❌ MAC detection error:", error);
+    res.status(500).json({ error: "Failed to update MAC" });
+  }
+});
 export default router;
