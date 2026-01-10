@@ -529,9 +529,9 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   }
 });
 // New endpoint for MAC detection
-router.post("/detect-mac", async (req, res) => {
+router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
   try {
-    const { username, detectedMac, ipAddress } = req.body;
+    const { username, detectedMac, ipAddress, routerId } = req.body;
 
     console.log(`🔍 MAC detection: ${username} -> ${detectedMac}`);
 
@@ -546,15 +546,26 @@ router.post("/detect-mac", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Update with REAL MAC
+    // Check if current MAC is temporary
+    const isTempMac =
+      user.macAddress && user.macAddress.startsWith("02:00:00:00:");
+
+    // Always update with REAL MAC when detected
     await prisma.user.update({
       where: { id: user.id },
-      data: { macAddress: detectedMac },
+      data: {
+        macAddress: detectedMac,
+        lastMacUpdate: new Date(), // Track when MAC was updated
+      },
     });
 
-    console.log(`✅ Updated ${username} with real MAC: ${detectedMac}`);
+    console.log(
+      `✅ Updated ${username}: ${
+        isTempMac ? "Temp->Real" : "Updated"
+      } MAC: ${detectedMac}`
+    );
 
-    // Update any active subscriptions
+    // Find active subscription
     const activeSub = await prisma.subscription.findFirst({
       where: {
         userId: user.id,
@@ -564,17 +575,19 @@ router.post("/detect-mac", async (req, res) => {
     });
 
     if (activeSub) {
-      // Update router session with real MAC
+      // Update router session
       await RouterSessionManager.updateMacAddress({
         subscriptionId: activeSub.id,
         macAddress: detectedMac,
         ipAddress,
+        routerId,
       });
     }
 
     res.json({
       success: true,
       message: "MAC address updated",
+      wasTemp: isTempMac,
     });
   } catch (error) {
     console.error("❌ MAC detection error:", error);
