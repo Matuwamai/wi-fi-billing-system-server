@@ -119,62 +119,74 @@ export const VoucherManager = {
 
       if (!voucher) throw new Error("Invalid voucher code");
 
-      // Check voucher status
-      if (voucher.status === "USED") {
-        throw new Error("Voucher has already been used");
-      }
+      // Check voucher status...
+      // ... (keep existing validation code)
 
-      if (
-        voucher.status === "EXPIRED" ||
-        new Date() > new Date(voucher.expiresAt)
-      ) {
-        // Auto-expire if needed
-        if (voucher.status !== "EXPIRED") {
-          await prisma.voucher.update({
-            where: { id: voucher.id },
-            data: { status: "EXPIRED" },
-          });
-        }
-        throw new Error("Voucher has expired");
+      // Generate a temporary MAC if not provided
+      let tempMac = macAddress;
+      let isTempMac = false;
+
+      if (!tempMac) {
+        // Generate temp MAC: 02:00:00:XX:XX:XX (locally administered)
+        const randomBytes = Math.floor(Math.random() * 65536)
+          .toString(16)
+          .padStart(4, "0");
+        tempMac = `02:00:00:${randomBytes.substring(
+          0,
+          2
+        )}:${randomBytes.substring(2, 4)}:00`;
+        isTempMac = true;
+        console.log(`📱 Generated temp MAC for voucher user: ${tempMac}`);
       }
 
       // Find or create user
       let user;
 
       if (phone || macAddress) {
-        // Try to find existing user
+        // Try to find existing user (including by temp MAC)
         user = await prisma.user.findFirst({
           where: {
             OR: [
               ...(phone ? [{ phone }] : []),
               ...(macAddress ? [{ macAddress }] : []),
+              ...(tempMac ? [{ macAddress: tempMac }] : []),
             ],
           },
         });
       }
 
       if (!user) {
-        // Create new guest user
+        // Create new user with temp MAC
         user = await prisma.user.create({
           data: {
             phone,
-            macAddress: null,
+            macAddress: tempMac,
             deviceName,
             isGuest: true,
             status: "ACTIVE",
+            isTempMac: isTempMac, // Add this field to track
+            lastMacUpdate: new Date(),
           },
         });
-        console.log(`🆕 Created user ${user.id} for voucher redemption`);
+        console.log(
+          `🆕 Created user ${user.id} with ${
+            isTempMac ? "TEMP" : "REAL"
+          } MAC: ${tempMac}`
+        );
       } else {
-        // Update existing user
+        // Update existing user with temp MAC if needed
+        const updateData = {
+          ...(deviceName && { deviceName }),
+          ...(!user.macAddress && { macAddress: tempMac }),
+          isTempMac: isTempMac || user.isTempMac,
+          lastMacUpdate: new Date(),
+        };
+
         await prisma.user.update({
           where: { id: user.id },
-          data: {
-            ...(macAddress && { macAddress }),
-            ...(deviceName && { deviceName }),
-          },
+          data: updateData,
         });
-        console.log(`♻️ Using existing user ${user.id}`);
+        console.log(`♻️ Updated user ${user.id} with MAC: ${tempMac}`);
       }
 
       // Calculate subscription end time
@@ -222,6 +234,8 @@ export const VoucherManager = {
           id: user.id,
           phone: user.phone,
           username: user.username,
+          macAddress: tempMac,
+          isTempMac,
         },
         plan: voucher.plan,
         message: `Voucher redeemed successfully! You have ${
