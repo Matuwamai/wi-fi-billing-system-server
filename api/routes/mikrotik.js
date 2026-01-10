@@ -483,7 +483,7 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
       },
       select: {
         username: true,
-        macAddress: true,
+        macAddress: null,
         phone: true,
         id: true,
         subscriptions: {
