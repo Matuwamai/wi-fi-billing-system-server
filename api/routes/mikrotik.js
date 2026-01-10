@@ -24,172 +24,6 @@ const validateMikroTikKey = (req, res, next) => {
 };
 
 /**
- * GET /api/mikrotik/sync-simple
- * Simple text format for RouterOS script parsing
- * Format: username|password|profile|comment (one per line)
- */
-// Add this optimized version with caching
-router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
-  try {
-    logger.info("MikroTik requesting user sync (simple format)");
-
-    // Get query parameters for optimization
-    const lastSync = req.query.last_sync; // Optional: timestamp of last sync
-    const routerId = req.query.router_id; // Optional: identify which router
-
-    // Get only active subscriptions
-    const activeSubscriptions = await prisma.subscription.findMany({
-      where: {
-        status: "ACTIVE",
-        endTime: {
-          gt: new Date(),
-        },
-        // Optional: Only get modified since last sync
-        ...(lastSync && {
-          OR: [
-            { updatedAt: { gt: new Date(lastSync) } },
-            { user: { updatedAt: { gt: new Date(lastSync) } } },
-          ],
-        }),
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            phone: true,
-            password: true,
-            macAddress: true,
-          },
-        },
-        plan: {
-          select: {
-            id: true,
-            name: true,
-            durationType: true,
-            durationValue: true,
-          },
-        },
-      },
-      orderBy: {
-        user: {
-          username: "asc",
-        },
-      },
-    });
-
-    // Format: username|password|profile|comment|mac_address|data_limit|speed_limit
-    const lines = activeSubscriptions.map((sub) => {
-      const user = sub.user;
-      const plan = sub.plan;
-
-      // Use username or phone as login
-      const username = user.username || user.phone || `user_${user.id}`;
-      const password = user.password || username;
-
-      // Profile name mapping to MikroTik user profiles
-      // Map common plan names to MikroTik profile names
-      const profileMap = {
-        // Hourly plans
-        "1 hour": "1hour",
-        "1-hour": "1hour",
-        hourly: "1hour",
-        "1h": "1hour",
-
-        // Daily plans
-        "1 day": "1day",
-        "1-day": "1day",
-        daily: "1day",
-        "24h": "1day",
-
-        // Weekly plans
-        "1 week": "1week",
-        "1-week": "1week",
-        weekly: "1week",
-        "7 days": "1week",
-        "7-days": "1week",
-
-        "2 weeks": "2weeks",
-        "2-weeks": "2weeks",
-        "14 days": "2weeks",
-        "14-days": "2weeks",
-
-        "3 weeks": "3weeks",
-        "3-weeks": "3weeks",
-        "21 days": "3weeks",
-        "21-days": "3weeks",
-
-        // Monthly plans
-        "1 month": "1month",
-        "1-month": "1month",
-        monthly: "1month",
-        "30 days": "1month",
-        "30-days": "1month",
-
-        // Default fallback
-        default: "1hour",
-      };
-
-      // Normalize plan name for mapping
-      const planName = plan.name.toLowerCase().trim();
-
-      // Get profile from map or use original name (sanitized)
-      let profile = profileMap[planName];
-
-      if (!profile) {
-        // Try to match with contains logic
-        for (const [key, value] of Object.entries(profileMap)) {
-          if (planName.includes(key) || key.includes(planName)) {
-            profile = value;
-            break;
-          }
-        }
-
-        // If still no match, use sanitized version
-        if (!profile) {
-          profile = plan.name
-            .replace(/\s+/g, "")
-            .replace(/-/g, "")
-            .toLowerCase();
-        }
-      }
-
-      // Comment with expiry info
-      const expiryDate = sub.endTime.toISOString().split("T")[0];
-      const comment = `${user.phone || "N/A"} Exp:${expiryDate}`;
-
-      // Add logging before returning
-      console.log("Plan name:", plan.name);
-      console.log("Profile being sent:", profile);
-      console.log("Full line:", `${username}|${password}|${profile}`);
-
-      return `${username}|${password}|${profile}`;
-    });
-
-    // Add header with sync info for debugging
-    const syncInfo =
-      `# Sync: ${new Date().toISOString()}\n` +
-      `# Count: ${lines.length}\n` +
-      `# Router: ${routerId || "unknown"}\n`;
-
-    logger.info(
-      `📡 Simple sync: ${lines.length} active users sent to MikroTik ${
-        routerId ? `(Router: ${routerId})` : ""
-      }`
-    );
-
-    res
-      .type("text/plain")
-      .set("X-Sync-Timestamp", new Date().toISOString())
-      .set("X-Total-Users", lines.length)
-      .send(syncInfo + lines.join("\n"));
-  } catch (error) {
-    logger.error("❌ Simple sync error:", error);
-    res.status(500).send("# ERROR: Sync failed\n");
-  }
-});
-
-/**
  * GET /api/mikrotik/sync
  * JSON format with detailed user information
  */
@@ -461,6 +295,167 @@ router.get("/stats", validateMikroTikKey, async (req, res) => {
   } catch (error) {
     logger.error("❌ Stats error:", error);
     res.status(500).json({ success: false, error: "Failed to get stats" });
+  }
+});
+/**
+ * GET /api/mikrotik/sync-simple
+ * Simple text format for RouterOS script parsing
+ * Format: username|password|profile|comment (one per line)
+ */
+// Add this optimized version with caching
+router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
+  try {
+    logger.info("MikroTik requesting user sync (simple format)");
+
+    // Get query parameters for optimization
+    const lastSync = req.query.last_sync; // Optional: timestamp of last sync
+    const routerId = req.query.router_id; // Optional: identify which router
+
+    // Get only active subscriptions
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        status: "ACTIVE",
+        endTime: {
+          gt: new Date(),
+        },
+        // Optional: Only get modified since last sync
+        ...(lastSync && {
+          OR: [
+            { updatedAt: { gt: new Date(lastSync) } },
+            { user: { updatedAt: { gt: new Date(lastSync) } } },
+          ],
+        }),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            phone: true,
+            password: true,
+            macAddress: true,
+          },
+        },
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            durationType: true,
+            durationValue: true,
+          },
+        },
+      },
+      orderBy: {
+        user: {
+          username: "asc",
+        },
+      },
+    });
+
+    // Format: username|password|profile|comment|mac_address|data_limit|speed_limit
+    const lines = activeSubscriptions.map((sub) => {
+      const user = sub.user;
+      const plan = sub.plan;
+
+      // Use username or phone as login
+      const username = user.username || user.phone || `user_${user.id}`;
+      const password = user.password || username;
+
+      // Profile name mapping to MikroTik user profiles
+      // Map common plan names to MikroTik profile names
+      const profileMap = {
+        // Hourly plans
+        "1 hour": "1hour",
+        "1-hour": "1hour",
+        hourly: "1hour",
+        "1h": "1hour",
+
+        // Daily plans
+        "1 day": "1day",
+        "1-day": "1day",
+        daily: "1day",
+        "24h": "1day",
+
+        // Weekly plans
+        "1 week": "1week",
+        "1-week": "1week",
+        weekly: "1week",
+        "7 days": "1week",
+        "7-days": "1week",
+
+        "2 weeks": "2weeks",
+        "2-weeks": "2weeks",
+        "14 days": "2weeks",
+        "14-days": "2weeks",
+
+        "3 weeks": "3weeks",
+        "3-weeks": "3weeks",
+        "21 days": "3weeks",
+        "21-days": "3weeks",
+
+        // Monthly plans
+        "1 month": "1month",
+        "1-month": "1month",
+        monthly: "1month",
+        "30 days": "1month",
+        "30-days": "1month",
+
+        // Default fallback
+        default: "1hour",
+      };
+
+      // Normalize plan name for mapping
+      const planName = plan.name.toLowerCase().trim();
+
+      // Get profile from map or use original name (sanitized)
+      let profile = profileMap[planName];
+
+      if (!profile) {
+        // Try to match with contains logic
+        for (const [key, value] of Object.entries(profileMap)) {
+          if (planName.includes(key) || key.includes(planName)) {
+            profile = value;
+            break;
+          }
+        }
+
+        // If still no match, use sanitized version
+        if (!profile) {
+          profile = plan.name
+            .replace(/\s+/g, "")
+            .replace(/-/g, "")
+            .toLowerCase();
+        }
+      }
+
+      // Comment with expiry info
+      const expiryDate = sub.endTime.toISOString().split("T")[0];
+      const comment = `${user.phone || "N/A"} Exp:${expiryDate}`;
+
+      // Add logging before returning
+      console.log("Plan name:", plan.name);
+      console.log("Profile being sent:", profile);
+      console.log("Full line:", `${username}|${password}|${profile}`);
+
+      return `${username}|${password}|${profile}`;
+    });
+
+    // Add header with sync info for debugging
+    const syncInfo = [
+      `# Sync: ${new Date().toISOString()}`,
+      `# Count: ${lines.length}`,
+      `# Router: ${routerId || "unknown"}`,
+      "", // Empty line to separate header from data
+    ].join("\n");
+
+    res
+      .type("text/plain")
+      .set("X-Sync-Timestamp", new Date().toISOString())
+      .set("X-Total-Users", lines.length.toString())
+      .send(syncInfo + "\n" + lines.join("\n"));
+  } catch (error) {
+    logger.error("❌ Simple sync error:", error);
+    res.status(500).send("# ERROR: Sync failed\n");
   }
 });
 
