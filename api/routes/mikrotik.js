@@ -687,8 +687,5 @@ function generateTempMac() {
 
   return `02:00:00:${randomBytes}`;
 }
-
-module.exports = {
-  generateTempMac,
-};
+export { generateTempMac };
 export default router;
