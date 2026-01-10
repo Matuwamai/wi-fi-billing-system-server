@@ -20,6 +20,9 @@ model User {
   deviceId       String?         @unique
   isGuest        Boolean         @default(false)
   status         UserStatus      @default(ACTIVE)
+  isTempMac      Boolean         @default(false)
+  lastMacUpdate  DateTime?
+  lastLogin      DateTime?
   subscriptions  Subscription[]
   routerSessions RouterSession[]
   payments       Payment[]

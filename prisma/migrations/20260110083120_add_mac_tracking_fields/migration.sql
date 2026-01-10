@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE `User` ADD COLUMN `isTempMac` BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN `lastLogin` DATETIME(3) NULL,
+    ADD COLUMN `lastMacUpdate` DATETIME(3) NULL;
