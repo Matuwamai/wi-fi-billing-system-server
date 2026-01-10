@@ -466,10 +466,14 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   try {
     logger.info("MikroTik requesting MAC bypass list");
 
-    // Get all active users, including those with null MACs
+    // Get users with active subscriptions, including those with temp MACs
     const usersWithActiveSubs = await prisma.user.findMany({
       where: {
-        // Include users even with null MAC
+        // Only include users with ANY MAC address (real or temp)
+        macAddress: {
+          not: null,
+        },
+        // AND have active subscription
         subscriptions: {
           some: {
             status: "ACTIVE",
@@ -484,6 +488,7 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
         username: true,
         macAddress: true,
         phone: true,
+        isTempMac: true,
         lastMacUpdate: true,
         subscriptions: {
           where: {
@@ -504,17 +509,18 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
       },
     });
 
-    // Filter and format MAC list
-    const macList = usersWithActiveSubs
-      .filter((user) => user.macAddress) // Only users with MAC (temp or real)
-      .map((user) => ({
-        mac: user.macAddress,
-        username: user.username || user.phone || `user_${user.id}`,
-        comment: `Auto-login: ${
-          user.subscriptions[0]?.plan.name || "Active"
-        } | ${user.macAddress.startsWith("02:00:00:00:") ? "TEMP" : "REAL"}`,
-        isTemp: user.macAddress.startsWith("02:00:00:00:"),
-      }));
+    logger.info(
+      `📡 Found ${usersWithActiveSubs.length} users with MACs for bypass`
+    );
+
+    const macList = usersWithActiveSubs.map((user) => ({
+      mac: user.macAddress,
+      username: user.username || user.phone || `user_${user.id}`,
+      comment: `Auto-login: ${user.subscriptions[0]?.plan.name || "Active"} | ${
+        user.isTempMac ? "TEMP (needs detection)" : "REAL"
+      }`,
+      isTemp: user.isTempMac,
+    }));
 
     logger.info(
       `📡 MAC bypass list: ${macList.length} devices (${
@@ -522,7 +528,16 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
       } temp)`
     );
 
-    // Return simple text format
+    // Log for debugging
+    macList.forEach((item, index) => {
+      logger.info(
+        `[${index + 1}] ${item.isTemp ? "TEMP" : "REAL"}: ${item.mac} | ${
+          item.username
+        }`
+      );
+    });
+
+    // Return format: MAC|username|comment
     const lines = macList.map(
       (item) => `${item.mac}|${item.username}|${item.comment}`
     );
