@@ -87,7 +87,7 @@ router.get("/check/:code", async (req, res) => {
  */
 router.post("/redeem", async (req, res) => {
   try {
-    const { voucherCode, phone, ipAddress, deviceName } = req.body;
+    const { voucherCode, phone, ipAddress, deviceName, userAgent } = req.body;
 
     if (!voucherCode) {
       return res.status(400).json({
@@ -103,17 +103,36 @@ router.post("/redeem", async (req, res) => {
       });
     }
 
-    console.log(`🎫 Redeeming voucher: ${voucherCode}`);
+    console.log(`🎫 Redeeming voucher: ${voucherCode} for ${deviceName}`);
+
+    // Extract possible MAC from user agent or other headers
+    let macAddress = null;
+
+    // Try to get client info
+    const forwardedFor = req.headers["x-forwarded-for"] || req.ip;
+    const clientInfo = {
+      ip: ipAddress || forwardedFor,
+      userAgent: userAgent || req.headers["user-agent"],
+      deviceName,
+    };
+
+    console.log("📱 Client info:", clientInfo);
 
     const result = await VoucherManager.redeemVoucher({
       voucherCode,
       phone,
-      macAddress: null,
-      ipAddress,
+      macAddress: null, // Will be generated as temp
+      ipAddress: clientInfo.ip,
       deviceName,
     });
 
-    res.json(result);
+    // Return the temp MAC to the client
+    res.json({
+      ...result,
+      instructions: result.user.isTempMac
+        ? "Your temporary access has been created. Connect to WiFi using any credentials and your real MAC will be detected automatically."
+        : "Access granted! You can now connect to the WiFi.",
+    });
   } catch (error) {
     console.error("❌ Redeem voucher error:", error.message);
     res.status(400).json({
