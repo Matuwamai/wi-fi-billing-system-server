@@ -466,12 +466,10 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   try {
     logger.info("MikroTik requesting MAC bypass list");
 
-    // Get unique users who have active subscriptions
+    // Get all active users, including those with null MACs
     const usersWithActiveSubs = await prisma.user.findMany({
       where: {
-        macAddress: {
-          not: null,
-        },
+        // Include users even with null MAC
         subscriptions: {
           some: {
             status: "ACTIVE",
@@ -482,9 +480,11 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
         },
       },
       select: {
-        username: true,
-        phone: true,
         id: true,
+        username: true,
+        macAddress: true,
+        phone: true,
+        lastMacUpdate: true,
         subscriptions: {
           where: {
             status: "ACTIVE",
@@ -499,25 +499,30 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
               },
             },
           },
-          take: 1, // Just get one subscription for the comment
+          take: 1,
         },
       },
     });
 
-    const macList = usersWithActiveSubs.map((user) => ({
-      mac: user.macAddress,
-      username: user.username || user.phone || `user_${user.id}`,
-      comment: `Auto-login: ${user.subscriptions[0]?.plan.name || "Active"}`,
-    }));
+    // Filter and format MAC list
+    const macList = usersWithActiveSubs
+      .filter((user) => user.macAddress) // Only users with MAC (temp or real)
+      .map((user) => ({
+        mac: user.macAddress,
+        username: user.username || user.phone || `user_${user.id}`,
+        comment: `Auto-login: ${
+          user.subscriptions[0]?.plan.name || "Active"
+        } | ${user.macAddress.startsWith("02:00:00:00:") ? "TEMP" : "REAL"}`,
+        isTemp: user.macAddress.startsWith("02:00:00:00:"),
+      }));
 
-    logger.info(`📡 MAC bypass list: ${macList.length} devices`);
+    logger.info(
+      `📡 MAC bypass list: ${macList.length} devices (${
+        macList.filter((m) => m.isTemp).length
+      } temp)`
+    );
 
-    // Log each MAC address for debugging
-    macList.forEach((item, index) => {
-      logger.info(`[${index + 1}] MAC: ${item.mac} | User: ${item.username}`);
-    });
-
-    // Return simple text format: MAC|username|comment
+    // Return simple text format
     const lines = macList.map(
       (item) => `${item.mac}|${item.username}|${item.comment}`
     );
