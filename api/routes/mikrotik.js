@@ -1,6 +1,7 @@
 import prisma from "../config/db.js";
 import logger from "../utils/logger.js";
 import express from "express";
+import { RouterSessionManager } from "../services/routerSessionService.js";
 
 const router = express.Router();
 // Middleware to validate MikroTik API key
@@ -462,18 +463,19 @@ router.get("/sync-simple", validateMikroTikKey, async (req, res) => {
 //  * NEW ENDPOINT: Get MAC address bypass list
 //  * MikroTik will add these MACs to bypass list for automatic login
 //  */
+// UPDATED: MAC Bypass endpoint - Skip TEMP MACs
 router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   try {
     logger.info("MikroTik requesting MAC bypass list");
 
-    // Get users with active subscriptions, including those with temp MACs
+    // Get users with active subscriptions and REAL MACs only
     const usersWithActiveSubs = await prisma.user.findMany({
       where: {
-        // Only include users with ANY MAC address (real or temp)
         macAddress: {
           not: null,
         },
-        // AND have active subscription
+        // IMPORTANT: Only users with REAL MACs (not temp)
+        isTempMac: false,
         subscriptions: {
           some: {
             status: "ACTIVE",
@@ -510,31 +512,37 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
     });
 
     logger.info(
-      `📡 Found ${usersWithActiveSubs.length} users with MACs for bypass`
+      `📡 Found ${usersWithActiveSubs.length} users with REAL MACs for bypass`
     );
+
+    // Count temp users (for logging)
+    const tempMacCount = await prisma.user.count({
+      where: {
+        isTempMac: true,
+        macAddress: { not: null },
+        subscriptions: {
+          some: {
+            status: "ACTIVE",
+            endTime: { gt: new Date() },
+          },
+        },
+      },
+    });
 
     const macList = usersWithActiveSubs.map((user) => ({
       mac: user.macAddress,
       username: user.username || user.phone || `user_${user.id}`,
-      comment: `Auto-login: ${user.subscriptions[0]?.plan.name || "Active"} | ${
-        user.isTempMac ? "TEMP (needs detection)" : "REAL"
-      }`,
+      comment: `Auto-login: ${user.subscriptions[0]?.plan.name || "Active"}`,
       isTemp: user.isTempMac,
     }));
 
     logger.info(
-      `📡 MAC bypass list: ${macList.length} devices (${
-        macList.filter((m) => m.isTemp).length
-      } temp)`
+      `📡 MAC bypass list: ${macList.length} real devices (${tempMacCount} temp MACs skipped)`
     );
 
-    // Log for debugging
+    // Log each MAC being sent
     macList.forEach((item, index) => {
-      logger.info(
-        `[${index + 1}] ${item.isTemp ? "TEMP" : "REAL"}: ${item.mac} | ${
-          item.username
-        }`
-      );
+      logger.info(`[${index + 1}] REAL: ${item.mac} | ${item.username}`);
     });
 
     // Return format: MAC|username|comment
@@ -548,12 +556,30 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
     res.status(500).send("Error");
   }
 });
-// New endpoint for MAC detection
+
+// UPDATED: MAC Detection endpoint - Better temp MAC checking
 router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
   try {
     const { username, detectedMac, ipAddress, routerId } = req.body;
 
-    console.log(`🔍 MAC detection: ${username} -> ${detectedMac}`);
+    if (!username || !detectedMac) {
+      return res.status(400).json({ error: "Missing username or detectedMac" });
+    }
+
+    console.log(
+      `🔍 MAC detection: ${username} -> ${detectedMac} @ ${ipAddress || "N/A"}`
+    );
+
+    // IMPORTANT: Ignore TEMP MACs from detection
+    // TEMP MACs start with 02:00:00 (locally administered)
+    if (detectedMac.toUpperCase().startsWith("02:00:00")) {
+      console.log(`⏭️ Ignoring TEMP MAC: ${detectedMac}`);
+      return res.json({
+        success: true,
+        message: "TEMP MAC ignored",
+        action: "none",
+      });
+    }
 
     // Find user
     const user = await prisma.user.findFirst({
@@ -563,26 +589,27 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
     });
 
     if (!user) {
+      console.log(`❌ User not found: ${username}`);
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Check if current MAC is temporary
-    const isTempMac =
-      user.macAddress && user.macAddress.startsWith("02:00:00:00:");
+    const oldMac = user.macAddress;
+    const wasTemp = user.isTempMac;
 
-    // Always update with REAL MAC when detected
+    // Update with REAL MAC
     await prisma.user.update({
       where: { id: user.id },
       data: {
         macAddress: detectedMac,
-        lastMacUpdate: new Date(), // Track when MAC was updated
+        isTempMac: false, // Mark as real MAC
+        lastMacUpdate: new Date(),
       },
     });
 
     console.log(
-      `✅ Updated ${username}: ${
-        isTempMac ? "Temp->Real" : "Updated"
-      } MAC: ${detectedMac}`
+      `✅ Updated ${username}: ${wasTemp ? "TEMP->REAL" : "Updated"} MAC: ${
+        oldMac || "none"
+      } -> ${detectedMac}`
     );
 
     // Find active subscription
@@ -595,23 +622,73 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
     });
 
     if (activeSub) {
-      // Update router session
-      await RouterSessionManager.updateMacAddress({
-        subscriptionId: activeSub.id,
-        macAddress: detectedMac,
-        ipAddress,
-        routerId,
-      });
+      // Update router session if exists
+      try {
+        const existingSession = await prisma.routerSession.findFirst({
+          where: {
+            subscriptionId: activeSub.id,
+            status: "ACTIVE",
+          },
+        });
+
+        if (existingSession) {
+          await prisma.routerSession.update({
+            where: { id: existingSession.id },
+            data: {
+              macAddress: detectedMac,
+              ipAddress: ipAddress || existingSession.ipAddress,
+            },
+          });
+        } else {
+          // Create new session
+          await prisma.routerSession.create({
+            data: {
+              userId: user.id,
+              planId: activeSub.planId,
+              subscriptionId: activeSub.id,
+              macAddress: detectedMac,
+              ipAddress: ipAddress,
+              status: "ACTIVE",
+              loginTime: new Date(),
+            },
+          });
+        }
+      } catch (sessionError) {
+        console.error("⚠️ Router session update error:", sessionError);
+        // Don't fail the whole request if session update fails
+      }
     }
 
     res.json({
       success: true,
-      message: "MAC address updated",
-      wasTemp: isTempMac,
+      message: "MAC address detected and updated",
+      wasTemp: wasTemp,
+      oldMac: oldMac,
+      newMac: detectedMac,
+      username: username,
     });
   } catch (error) {
     console.error("❌ MAC detection error:", error);
     res.status(500).json({ error: "Failed to update MAC" });
   }
 });
+
+// HELPER: Generate temporary MAC address
+// This should match the format you use in VoucherManager
+function generateTempMac() {
+  // Use 02:00:00 prefix (locally administered MAC)
+  // This ensures MikroTik recognizes it as temp and won't use for bypass
+  const randomBytes = Array.from({ length: 3 }, () =>
+    Math.floor(Math.random() * 256)
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase()
+  ).join(":");
+
+  return `02:00:00:${randomBytes}`;
+}
+
+module.exports = {
+  generateTempMac,
+};
 export default router;

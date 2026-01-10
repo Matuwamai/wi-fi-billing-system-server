@@ -38,6 +38,49 @@ const calculateEndTime = (plan) => {
   }
 };
 
+// Helper: Generate random password
+function generateRandomPassword(length = 8) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from(
+    { length },
+    () => chars[Math.floor(Math.random() * chars.length)]
+  ).join("");
+}
+
+function generateTempMac() {
+  // Use 02:00:00 prefix (locally administered MAC)
+  const randomBytes = Array.from({ length: 3 }, () =>
+    Math.floor(Math.random() * 256)
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase()
+  ).join(":");
+
+  return `02:00:00:${randomBytes}`;
+}
+
+// Helper: Send SMS with credentials
+async function sendCredentialsSMS(phone, credentials) {
+  const message = `
+WiFi Access Activated!
+
+Username: ${credentials.username}
+Password: ${credentials.password}
+
+Plan: ${credentials.plan}
+Valid until: ${credentials.expiryDate.toLocaleDateString()}
+
+Instructions:
+1. Connect to WiFi
+2. Open browser and login ONCE
+3. Future connections are automatic!
+
+Enjoy your internet!
+  `.trim();
+
+  console.log(`📱 SMS to ${phone}:`, message);
+}
+
 export const VoucherManager = {
   /**
    * Create voucher with subscription (Admin function)
@@ -99,7 +142,7 @@ export const VoucherManager = {
   },
 
   /**
-   * Redeem voucher and start session (User function)
+   * Redeem voucher and create subscription with temp MAC
    */
   redeemVoucher: async ({
     voucherCode,
@@ -111,136 +154,144 @@ export const VoucherManager = {
     try {
       // Find voucher
       const voucher = await prisma.voucher.findUnique({
-        where: { code: voucherCode.toUpperCase().replace(/\s/g, "") },
-        include: {
-          plan: true,
-        },
+        where: { code: voucherCode },
+        include: { plan: true },
       });
 
-      if (!voucher) throw new Error("Invalid voucher code");
+      if (!voucher) {
+        throw new Error("Invalid voucher code");
+      }
 
-      // Check voucher status...
-      // ... (keep existing validation code)
+      if (voucher.status === "USED") {
+        throw new Error("Voucher has already been used");
+      }
 
-      // Generate a temporary MAC if not provided
-      let tempMac = macAddress;
-      let isTempMac = false;
-
-      if (!tempMac) {
-        // Generate temp MAC: 02:00:00:XX:XX:XX (locally administered)
-        const randomBytes = Math.floor(Math.random() * 65536)
-          .toString(16)
-          .padStart(4, "0");
-        tempMac = `02:00:00:${randomBytes.substring(
-          0,
-          2
-        )}:${randomBytes.substring(2, 4)}:00`;
-        isTempMac = true;
-        console.log(`📱 Generated temp MAC for voucher user: ${tempMac}`);
+      if (voucher.status === "EXPIRED" || new Date() > voucher.expiresAt) {
+        throw new Error("Voucher has expired");
       }
 
       // Find or create user
-      let user;
+      let user = phone
+        ? await prisma.user.findUnique({ where: { phone } })
+        : null;
 
-      if (phone || macAddress) {
-        // Try to find existing user (including by temp MAC)
-        user = await prisma.user.findFirst({
-          where: {
-            OR: [
-              ...(phone ? [{ phone }] : []),
-              ...(macAddress ? [{ macAddress }] : []),
-              ...(tempMac ? [{ macAddress: tempMac }] : []),
-            ],
-          },
-        });
-      }
+      const username =
+        user?.username || `user_${Math.random().toString(36).substr(2, 9)}`;
+      const password = generateRandomPassword(8);
 
       if (!user) {
-        // Create new user with temp MAC
+        // Create new user with TEMP MAC
         user = await prisma.user.create({
           data: {
-            phone,
-            macAddress: tempMac,
-            deviceName,
-            isGuest: true,
+            phone: phone || null,
+            username: username,
+            password: password,
+            deviceName: deviceName,
+            macAddress: generateTempMac(), // Start with TEMP MAC
+            isTempMac: true,
             status: "ACTIVE",
-            isTempMac: isTempMac, // Add this field to track
-            lastMacUpdate: new Date(),
+            role: "USER",
           },
         });
-        console.log(
-          `🆕 Created user ${user.id} with ${
-            isTempMac ? "TEMP" : "REAL"
-          } MAC: ${tempMac}`
-        );
-      } else {
-        // Update existing user with temp MAC if needed
-        const updateData = {
-          ...(deviceName && { deviceName }),
-          ...(!user.macAddress && { macAddress: tempMac }),
-          isTempMac: isTempMac || user.isTempMac,
-          lastMacUpdate: new Date(),
-        };
 
-        await prisma.user.update({
+        console.log(
+          `✅ Created user: ${username} with TEMP MAC: ${user.macAddress}`
+        );
+      } else if (!user.username || !user.password) {
+        // Update existing user with credentials and temp MAC if needed
+        user = await prisma.user.update({
           where: { id: user.id },
-          data: updateData,
+          data: {
+            username: username,
+            password: password,
+            deviceName: deviceName,
+            macAddress: user.macAddress || generateTempMac(),
+            isTempMac: user.macAddress ? user.isTempMac : true,
+          },
         });
-        console.log(`♻️ Updated user ${user.id} with MAC: ${tempMac}`);
+
+        console.log(`✅ Updated user: ${username}`);
       }
 
       // Calculate subscription end time
-      const startTime = new Date();
-      const endTime = calculateEndTime(voucher.plan);
+      const plan = voucher.plan;
+      const endTime = calculateEndTime(plan);
 
       // Create subscription
       const subscription = await prisma.subscription.create({
         data: {
           userId: user.id,
-          planId: voucher.plan.id,
-          startTime,
-          endTime,
+          planId: plan.id,
+          startTime: new Date(),
+          endTime: endTime,
           status: "ACTIVE",
         },
       });
-
-      console.log(`✅ Subscription created: ${subscription.id}`);
 
       // Mark voucher as used
       await prisma.voucher.update({
         where: { id: voucher.id },
         data: {
           status: "USED",
-          usedBy: user.id,
           usedAt: new Date(),
+          usedBy: user.id,
           subscriptionId: subscription.id,
         },
       });
 
-      console.log(`✅ Voucher marked as used: ${voucherCode}`);
-
-      // Start router session
-      const session = await RouterSessionManager.startAutomatic({
-        subscriptionId: subscription.id,
-        macAddress,
-        ipAddress,
+      // Create initial router session
+      await prisma.routerSession.create({
+        data: {
+          userId: user.id,
+          planId: plan.id,
+          subscriptionId: subscription.id,
+          macAddress: user.macAddress,
+          ipAddress: ipAddress,
+          status: "PENDING", // Will become ACTIVE when real MAC is detected
+          loginTime: new Date(),
+        },
       });
+
+      console.log(`✅ Voucher redeemed: ${voucherCode} by ${username}`);
+      console.log(
+        `📱 TEMP MAC assigned: ${user.macAddress} (will be updated on first login)`
+      );
+
+      // Send credentials via SMS if phone provided
+      if (phone) {
+        await sendCredentialsSMS(phone, {
+          username: user.username,
+          password: user.password,
+          plan: plan.name,
+          expiryDate: endTime,
+        });
+      }
 
       return {
         success: true,
-        subscription,
-        session,
+        message: "Voucher redeemed successfully",
         user: {
           id: user.id,
-          phone: user.phone,
           username: user.username,
-          macAddress: tempMac,
-          isTempMac,
+          password: user.password,
+          macAddress: user.macAddress,
+          isTempMac: user.isTempMac,
         },
-        plan: voucher.plan,
-        message: `Voucher redeemed successfully! You have ${
-          voucher.plan.durationValue
-        } ${voucher.plan.durationType.toLowerCase()}(s) of internet access.`,
+        subscription: {
+          id: subscription.id,
+          planName: plan.name,
+          startTime: subscription.startTime,
+          endTime: endTime,
+          durationValue: plan.durationValue,
+          durationType: plan.durationType,
+        },
+        instructions: {
+          step1: "Connect to the WiFi network",
+          step2: "Open any website in your browser",
+          step3: `Login with username: ${user.username} and password: ${user.password}`,
+          step4: "After logging in ONCE, future connections will be automatic!",
+          note: "Your device MAC will be detected automatically on first login",
+        },
       };
     } catch (error) {
       console.error("❌ Voucher redemption error:", error.message);
@@ -248,9 +299,6 @@ export const VoucherManager = {
     }
   },
 
-  /**
-   * Check voucher validity without redeeming
-   */
   checkVoucher: async (voucherCode) => {
     try {
       const voucher = await prisma.voucher.findUnique({
