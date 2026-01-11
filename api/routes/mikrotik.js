@@ -627,6 +627,7 @@ router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {
 
     if (activeSub) {
       try {
+        // Find existing ACTIVE session
         const existingSession = await prisma.routerSession.findFirst({
           where: {
             subscriptionId: activeSub.id,
@@ -635,14 +636,18 @@ router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {
         });
 
         if (existingSession) {
+          // Update existing ACTIVE session
           await prisma.routerSession.update({
             where: { id: existingSession.id },
             data: {
               macAddress: detectedMac,
               ipAddress: ipAddress || existingSession.ipAddress,
+              lastActivity: new Date(),
             },
           });
+          console.log(`✅ Updated existing session with MAC: ${detectedMac}`);
         } else {
+          // Create new ACTIVE session
           await prisma.routerSession.create({
             data: {
               userId: user.id,
@@ -652,14 +657,29 @@ router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {
               ipAddress: ipAddress,
               status: "ACTIVE",
               loginTime: new Date(),
+              lastActivity: new Date(),
             },
           });
+          console.log(`✅ Created new ACTIVE session for MAC: ${detectedMac}`);
         }
+
+        // OPTIONAL: Also update any PENDING sessions if they exist
+        await prisma.routerSession.updateMany({
+          where: {
+            userId: user.id,
+            subscriptionId: activeSub.id,
+            status: "PENDING",
+            macAddress: null, // Only update if MAC wasn't set
+          },
+          data: {
+            macAddress: detectedMac,
+            ipAddress: ipAddress,
+          },
+        });
       } catch (sessionError) {
         console.error("⚠️ Router session update error:", sessionError);
       }
     }
-
     res.json({
       success: true,
       message: "MAC address detected and updated",
