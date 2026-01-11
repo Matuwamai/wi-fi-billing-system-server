@@ -557,21 +557,25 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   }
 });
 
-// UPDATED: MAC Detection endpoint - Better temp MAC checking
-router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
+// Add this NEW endpoint to your mikrotik routes
+// This accepts MAC detection via GET instead of POST (workaround for MikroTik POST issues)
+
+router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {
   try {
-    const { username, detectedMac, ipAddress, routerId } = req.body;
+    // Get data from query parameters instead of body
+    const { username, detectedMac, ipAddress, routerId } = req.query;
 
     if (!username || !detectedMac) {
       return res.status(400).json({ error: "Missing username or detectedMac" });
     }
 
     console.log(
-      `🔍 MAC detection: ${username} -> ${detectedMac} @ ${ipAddress || "N/A"}`
+      `🔍 MAC detection (GET): ${username} -> ${detectedMac} @ ${
+        ipAddress || "N/A"
+      }`
     );
 
     // IMPORTANT: Ignore TEMP MACs from detection
-    // TEMP MACs start with 02:00:00 (locally administered)
     if (detectedMac.toUpperCase().startsWith("02:00:00")) {
       console.log(`⏭️ Ignoring TEMP MAC: ${detectedMac}`);
       return res.json({
@@ -601,7 +605,7 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
       where: { id: user.id },
       data: {
         macAddress: detectedMac,
-        isTempMac: false, // Mark as real MAC
+        isTempMac: false,
         lastMacUpdate: new Date(),
       },
     });
@@ -622,7 +626,6 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
     });
 
     if (activeSub) {
-      // Update router session if exists
       try {
         const existingSession = await prisma.routerSession.findFirst({
           where: {
@@ -640,7 +643,6 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
             },
           });
         } else {
-          // Create new session
           await prisma.routerSession.create({
             data: {
               userId: user.id,
@@ -655,7 +657,6 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
         }
       } catch (sessionError) {
         console.error("⚠️ Router session update error:", sessionError);
-        // Don't fail the whole request if session update fails
       }
     }
 
@@ -672,7 +673,6 @@ router.post("/detect-mac", validateMikroTikKey, async (req, res) => {
     res.status(500).json({ error: "Failed to update MAC" });
   }
 });
-
 // HELPER: Generate temporary MAC address
 // This should match the format you use in VoucherManager
 function generateTempMac() {
