@@ -10,25 +10,26 @@ datasource db {
 }
 
 model User {
-  id             Int             @id @default(autoincrement())
-  phone          String?         @unique // Make it nullable with ?
-  macAddress     String?
-  password       String?
-  username       String?         @unique // Add username field
-  deviceName     String?
-  role           String?         @default("USER")
-  deviceId       String?         @unique
-  isGuest        Boolean         @default(false)
-  status         UserStatus      @default(ACTIVE)
-  isTempMac      Boolean         @default(false)
-  lastMacUpdate  DateTime?
-  lastLogin      DateTime?
-  subscriptions  Subscription[]
-  routerSessions RouterSession[]
-  payments       Payment[]
-  vouchers       Voucher[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id              Int              @id @default(autoincrement())
+  phone           String?          @unique // Make it nullable with ?
+  macAddress      String?
+  password        String?
+  username        String?          @unique // Add username field
+  deviceName      String?
+  role            String?          @default("USER")
+  deviceId        String?          @unique
+  isGuest         Boolean          @default(false)
+  status          UserStatus       @default(ACTIVE)
+  isTempMac       Boolean          @default(false)
+  lastMacUpdate   DateTime?
+  lastLogin       DateTime?
+  subscriptions   Subscription[]
+  routerSessions  RouterSession[]
+  payments        Payment[]
+  vouchers        Voucher[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  tempDeviceLinks TempDeviceLink[]
 }
 
 model Plan {
@@ -128,6 +129,23 @@ model SyncLog {
   success   Boolean
   error     String?
   createdAt DateTime @default(now())
+}
+
+model TempDeviceLink {
+  id         Int      @id @default(autoincrement())
+  token      String   @unique
+  userId     Int
+  realMac    String? // Real MAC when detected
+  deviceName String?
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([token])
+  @@index([expiresAt])
 }
 
 enum UserRole {
