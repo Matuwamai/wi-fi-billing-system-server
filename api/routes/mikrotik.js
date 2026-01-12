@@ -298,6 +298,224 @@ router.get("/stats", validateMikroTikKey, async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to get stats" });
   }
 });
+router.get("/update-device-hostname", async (req, res) => {
+  try {
+    // Get parameters from query string instead of body
+    const {
+      macAddress,
+      deviceHostname,
+      ipAddress,
+      authorized,
+      tempToken, // From URL parameters
+      phone, // Optional phone for matching
+    } = req.query;
+
+    console.log("📡 Device detection (GET):", {
+      macAddress,
+      deviceHostname,
+      tempToken,
+      phone,
+      ipAddress,
+      authorized,
+    });
+
+    if (!macAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "MAC address required",
+      });
+    }
+
+    // Clean device hostname
+    const cleanHostname =
+      deviceHostname && deviceHostname !== "undefined"
+        ? deviceHostname
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]/g, "")
+            .substring(0, 30)
+        : null;
+
+    let user = null;
+    let matchType = "unknown";
+
+    // ====== METHOD 1: TEMP TOKEN MATCHING (Most Reliable) ======
+    if (tempToken && tempToken !== "undefined") {
+      user = await prisma.user.findFirst({
+        where: {
+          tempAccessToken: tempToken,
+          tempTokenExpiry: { gt: new Date() }, // Not expired
+        },
+      });
+      if (user) {
+        matchType = "temp_token_match";
+        console.log(`✅ Temp token match: ${tempToken} → User ${user.id}`);
+      }
+    }
+
+    // ====== METHOD 2: RECENT TEMP USER MATCHING ======
+    if (!user) {
+      // Look for users created in last 30 minutes with temp MACs
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+
+      const whereConditions = [];
+
+      // User with same phone created recently
+      if (phone && phone !== "undefined") {
+        whereConditions.push({
+          phone: phone,
+          createdAt: { gte: thirtyMinutesAgo },
+        });
+      }
+
+      // User with similar device name created recently
+      if (cleanHostname) {
+        whereConditions.push({
+          username: { contains: cleanHostname.substring(0, 10) },
+          createdAt: { gte: thirtyMinutesAgo },
+          isTempMac: true,
+        });
+      }
+
+      if (whereConditions.length > 0) {
+        user = await prisma.user.findFirst({
+          where: { OR: whereConditions },
+          orderBy: { createdAt: "desc" },
+        });
+        if (user) matchType = "recent_user_match";
+      }
+    }
+
+    // ====== METHOD 3: EXACT USERNAME MATCH ======
+    if (!user && cleanHostname) {
+      user = await prisma.user.findFirst({
+        where: { username: cleanHostname },
+      });
+      if (user) matchType = "username_exact_match";
+    }
+
+    // ====== METHOD 4: PARTIAL USERNAME MATCH ======
+    if (!user && cleanHostname && cleanHostname.length > 5) {
+      // Try partial matches (e.g., "matu-s-a05" matches "matu-s")
+      const partialMatches = await prisma.user.findMany({
+        where: {
+          OR: [
+            { username: { startsWith: cleanHostname.substring(0, 5) } },
+            { username: { contains: cleanHostname.substring(0, 5) } },
+          ],
+          isTempMac: true,
+          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (partialMatches.length > 0) {
+        user = partialMatches[0];
+        matchType = "username_partial_match";
+      }
+    }
+
+    // ====== METHOD 5: CREATE NEW GUEST USER ======
+    if (!user) {
+      const password = Math.random().toString(36).substring(2, 10);
+      const username =
+        cleanHostname || `guest_${Math.random().toString(36).substring(2, 8)}`;
+
+      user = await prisma.user.create({
+        data: {
+          username: username,
+          password: password,
+          deviceName: deviceHostname || "Unknown Device",
+          macAddress: macAddress,
+          isTempMac: false, // This is a real MAC
+          status: "ACTIVE",
+          role: "USER",
+          isGuest: true,
+        },
+      });
+      matchType = "new_guest_user";
+      console.log(`🆕 Created guest user: ${username} for MAC: ${macAddress}`);
+    }
+
+    // ====== UPDATE USER WITH REAL MAC ======
+    const updateData = {
+      macAddress: macAddress,
+      isTempMac: false,
+      deviceName: deviceHostname || user.deviceName,
+      lastMacUpdate: new Date(),
+      updatedAt: new Date(),
+    };
+
+    // Update username to device hostname if different
+    if (
+      cleanHostname &&
+      user.username !== cleanHostname &&
+      !user.username.startsWith("guest_")
+    ) {
+      updateData.username = cleanHostname;
+    }
+
+    // Clear temp token if used
+    if (matchType === "temp_token_match") {
+      updateData.tempAccessToken = null;
+      updateData.tempTokenExpiry = null;
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: updateData,
+    });
+
+    console.log(
+      `✅ User updated: ${updatedUser.username}, MAC: ${updatedUser.macAddress}, Match: ${matchType}`
+    );
+
+    // ====== AUTO-AUTHORIZE IF HAS ACTIVE SUBSCRIPTION ======
+    let autoAuthorized = false;
+    const activeSubscription = await prisma.subscription.findFirst({
+      where: {
+        userId: user.id,
+        status: "ACTIVE",
+        endTime: { gt: new Date() },
+      },
+    });
+
+    if (activeSubscription) {
+      await prisma.routerSession.create({
+        data: {
+          userId: user.id,
+          planId: activeSubscription.planId,
+          subscriptionId: activeSubscription.id,
+          macAddress: macAddress,
+          ipAddress: ipAddress,
+          status: "ACTIVE",
+          loginTime: new Date(),
+        },
+      });
+      autoAuthorized = true;
+      console.log(`✅ Auto-authorized user with active subscription`);
+    }
+
+    res.json({
+      success: true,
+      message: "Device registered successfully",
+      matchType: matchType,
+      autoAuthorized: autoAuthorized,
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        hasActiveSubscription: !!activeSubscription,
+        needsPayment: !activeSubscription,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Device update error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update device",
+      error: error.message,
+    });
+  }
+});
 /**
  * GET /api/mikrotik/sync-simple
  * Simple text format for RouterOS script parsing
