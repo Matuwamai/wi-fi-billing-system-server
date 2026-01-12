@@ -911,6 +911,64 @@ router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {
     res.status(500).json({ error: "Failed to update MAC" });
   }
 });
+
+// Route for the one-click connection
+router.get("/auto-connect", async (req, res) => {
+  const { token } = req.query;
+
+  // Find user by token
+  const user = await prisma.user.findFirst({
+    where: { tempAccessToken: token },
+  });
+
+  if (!user) {
+    return res.send(`
+      <html>
+        <body>
+          <h1>Token expired or invalid</h1>
+          <p>Please make a payment first.</p>
+        </body>
+      </html>
+    `);
+  }
+
+  // Generate WiFi config file for download
+  const wifiConfig = `
+<?xml version="1.0"?>
+<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
+  <name>Your WiFi Network</name>
+  <SSIDConfig>
+    <SSID>
+      <name>Your-WiFi-Name</name>
+    </SSID>
+  </SSIDConfig>
+  <connectionType>ESS</connectionType>
+  <connectionMode>auto</connectionMode>
+  <MSM>
+    <security>
+      <authEncryption>
+        <authentication>WPA2PSK</authentication>
+        <encryption>AES</encryption>
+        <useOneX>false</useOneX>
+      </authEncryption>
+      <sharedKey>
+        <keyType>passPhrase</keyType>
+        <protected>false</protected>
+        <keyMaterial>welcome123</keyMaterial>
+      </sharedKey>
+    </security>
+  </MSM>
+</WLANProfile>
+  `;
+
+  // Set headers for file download
+  res.setHeader("Content-Type", "application/xml");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="wifi-config.xml"'
+  );
+  res.send(wifiConfig);
+});
 // HELPER: Generate temporary MAC address
 // This should match the format you use in VoucherManager
 function generateTempMac() {
