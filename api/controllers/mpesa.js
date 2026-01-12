@@ -8,7 +8,8 @@ import logger from "../utils/logger.js"; // ✅ use Winston logger
  */
 export const startPayment = async (req, res) => {
   try {
-    const { phone, userId, planId, macAddress, deviceName, deviceId } =
+    // ADD deviceHostname to the destructuring
+    const { phone, userId, planId, macAddress, deviceName, deviceHostname, suggestedUsername } =
       req.body;
 
     console.log("📥 Payment request received:", {
@@ -17,30 +18,13 @@ export const startPayment = async (req, res) => {
       planId,
       macAddress,
       deviceName,
+      deviceHostname, // ADD this
+      suggestedUsername, // ADD this
     });
 
-    if (!planId) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing planId",
-      });
-    }
+    // ... rest of your existing code ...
 
-    // Fetch plan
-    const plan = await prisma.plan.findUnique({
-      where: { id: Number(planId) },
-    });
-
-    if (!plan) {
-      return res.status(404).json({
-        success: false,
-        message: "Plan not found",
-      });
-    }
-
-    console.log("✅ Plan found:", plan.name);
-
-    // ✅ Resolve or create user
+    // ✅ Resolve or create user - UPDATED SECTION
     let user = null;
 
     // Try to find user by ID first
@@ -53,32 +37,47 @@ export const startPayment = async (req, res) => {
       if (user) {
         console.log(`✅ Found existing user: ${user.id}`);
 
-        // Update MAC address and device name
+        // Update user info
+        if (deviceHostname && !user.username.includes(deviceHostname)) {
+          // If we have device hostname, update username to match
+          const cleanHostname = deviceHostname.toLowerCase().replace(/[^a-z0-9-_]/g, '');
+          user.username = cleanHostname;
+        }
+        
         if (macAddress || deviceName) {
           user = await prisma.user.update({
             where: { id: user.id },
             data: {
+              username: user.username, // Include username update
               ...(macAddress && { macAddress }),
               ...(deviceName && { deviceName }),
             },
           });
-          console.log(
-            `✅ User ${user.id} updated - MAC: ${macAddress}, Device: ${deviceName}`
-          );
         }
-      } else {
-        console.log(`⚠️  User ID ${userId} not found, will create guest user`);
+        console.log(`✅ User ${user.id} updated`);
       }
     }
 
     // If no user found by ID, try to find or create guest user
     if (!user) {
-      console.log("🔍 Looking for existing guest user by MAC/phone...");
+      console.log("🔍 Looking for existing guest user by MAC/phone/username...");
 
-      // Try to find existing guest user by MAC or phone
+      // Generate username from device hostname or suggested username
+      let username = deviceHostname || suggestedUsername;
+      if (!username) {
+        username = `user_${Math.random().toString(36).substring(2, 10)}`;
+      }
+      
+      // Clean the username
+      const cleanUsername = username.toLowerCase().replace(/[^a-z0-9-_]/g, '').substring(0, 30);
+      
+      console.log(`🆔 Generated username from device: ${cleanUsername}`);
+
+      // Try to find existing user by MAC, phone, OR username
       const whereConditions = [];
       if (macAddress) whereConditions.push({ macAddress });
       if (phone) whereConditions.push({ phone });
+      if (cleanUsername) whereConditions.push({ username: cleanUsername });
 
       if (whereConditions.length > 0) {
         user = await prisma.user.findFirst({
@@ -89,189 +88,71 @@ export const startPayment = async (req, res) => {
 
         console.log(
           "🔍 Guest lookup result:",
-          user ? `Found user ${user.id}` : "No existing user"
+          user ? `Found user ${user.id} (${user.username})` : "No existing user"
         );
       }
 
       // Create new guest user if still not found
       if (!user) {
-        console.log("🆕 Creating new guest user...");
+        console.log("🆕 Creating new user with device-based username...");
+        
+        // Generate password for new user
+        const password = Math.random().toString(36).substring(2, 10);
+        
         user = await prisma.user.create({
           data: {
             phone: phone || null,
+            username: cleanUsername, // Use device hostname as username
+            password: password, // Set initial password
             macAddress: macAddress || null,
             deviceName: deviceName || null,
             deviceId: deviceId || null,
             isGuest: true,
+            status: "ACTIVE",
+            role: "USER",
           },
         });
         console.log(
-          `✅ Guest user created: ID=${user.id}, Phone=${phone}, MAC=${macAddress}`
+          `✅ User created: ID=${user.id}, Username=${cleanUsername}, Password=${password}`
         );
+        
+        // Optionally send credentials via SMS
+        if (phone) {
+          const message = `Your WiFi account created!\nUsername: ${cleanUsername}\nPassword: ${password}\n\nSave these credentials for future logins.`;
+          console.log(`📱 Would send SMS to ${phone}:`, message);
+          // Uncomment to actually send SMS:
+          // await sendSMS(phone, message);
+        }
       } else {
         // Update existing user with latest info
         console.log("📝 Updating existing user with new info...");
+        
+        const updateData = {
+          ...(phone && { phone }),
+          ...(macAddress && { macAddress }),
+          ...(deviceName && { deviceName }),
+          ...(deviceId && { deviceId }),
+        };
+        
+        // Update username if device hostname is provided and different
+        if (deviceHostname && user.username !== cleanUsername) {
+          updateData.username = cleanUsername;
+        }
+        
         user = await prisma.user.update({
           where: { id: user.id },
-          data: {
-            ...(phone && { phone }),
-            ...(macAddress && { macAddress }),
-            ...(deviceName && { deviceName }),
-            ...(deviceId && { deviceId }),
-          },
+          data: updateData,
         });
-        console.log(`✅ User ${user.id} updated`);
+        console.log(`✅ User ${user.id} updated with username: ${user.username}`);
       }
     }
 
-    console.log("✅✅ User successfully resolved:", {
-      id: user.id,
-      phone: user.phone,
-      macAddress: user.macAddress,
-      isGuest: user.isGuest,
-    });
-
-    // ✅ Create pending payment
-    const payment = await prisma.payment.create({
-      data: {
-        userId: user.id,
-        planId: plan.id,
-        amount: plan.price,
-        method: "MPESA",
-        status: "PENDING",
-      },
-    });
-
-    console.log(
-      `💰 Payment created: ID=${payment.id}, Amount: ${payment.amount}`
-    );
-
-    // ✅ Trigger STK push
-    const stkResponse = await initiateStkPush({
-      amount: plan.price,
-      phone: phone || user.phone,
-      accountRef: `WIFI-${payment.id}`,
-    });
-
-    // ✅ Save STK identifiers
-    if (stkResponse?.CheckoutRequestID) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          checkoutRequestId: stkResponse.CheckoutRequestID,
-          merchantRequestId: stkResponse.MerchantRequestID || null,
-        },
-      });
-    }
-
-    logger.info(
-      `📲 STK Push initiated: Payment ${payment.id} for User ${user.id} (${plan.name})`
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "STK push initiated",
-      payment,
-      user: {
-        id: user.id,
-        phone: user.phone,
-        macAddress: user.macAddress,
-      },
-      stkResponse,
-    });
-  } catch (error) {
-    console.error("❌ Payment error:", error);
-    console.error("Error stack:", error.stack);
-    logger.error(`STK push error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      message: "STK push failed",
-      error: error.message,
-    });
+    // ... rest of your existing payment code ...
   }
-};
+}
 
 // paymentController.js or mpesaController.js
-export const initiatePayment = async (req, res) => {
-  try {
-    const { phone, userId, planId, deviceName } = req.body;
 
-    console.log("Payment request:", {
-      phone,
-      userId,
-      planId,
-      macAddress,
-      deviceName,
-    });
-
-    // Validate inputs
-    if (!phone || !userId || !planId) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone, userId, and planId are required",
-      });
-    }
-
-    // Update user with MAC address and device name if provided
-    if (macAddress || deviceName) {
-      // In your user creation logic
-      const user = await prisma.user.update({
-        where: { id: userId },
-        data: {
-          username: generatedUsername,
-          password: generatePassword(),
-          phone: null,
-          macAddress: null, // Start NULL
-          isGuest: true,
-          status: "ACTIVE",
-        },
-      });
-    }
-
-    // Create payment record
-    const payment = await prisma.payment.create({
-      data: {
-        userId,
-        planId,
-        phone,
-        amount: plan.price, // Get from plan
-        status: "PENDING",
-      },
-    });
-
-    // ✅ Trigger STK push
-    const stkResponse = await initiateStkPush({
-      amount: plan.price,
-      phone: phone || user.phone,
-      accountRef: `WIFI-${payment.id}`,
-    });
-
-    // ✅ Save identifiers
-    if (stkResponse?.CheckoutRequestID) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          checkoutRequestId: stkResponse.CheckoutRequestID,
-          merchantRequestId: stkResponse.MerchantRequestID || null,
-        },
-      });
-    }
-
-    logger.info(
-      `📲 STK Push initiated: Payment ${payment.id} for User ${user.id} (${plan.name})`
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "STK push initiated",
-      payment,
-      stkResponse,
-    });
-  } catch (error) {
-    console.error("Payment initiation error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
 /**
  * ✅ Automate Callback Handling
  */
