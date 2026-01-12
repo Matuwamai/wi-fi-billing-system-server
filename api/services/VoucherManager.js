@@ -85,6 +85,11 @@ export const VoucherManager = {
   /**
    * Create voucher with subscription (Admin function)
    */
+
+  /**
+   * Redeem voucher and create subscription with temp MAC
+   */
+
   createVoucher: async ({
     planId,
     quantity = 1,
@@ -142,7 +147,7 @@ export const VoucherManager = {
   },
 
   /**
-   * Redeem voucher and create subscription with temp MAC
+   * Redeem voucher and create subscription with device-based username
    */
   redeemVoucher: async ({
     voucherCode,
@@ -150,6 +155,7 @@ export const VoucherManager = {
     macAddress,
     ipAddress,
     deviceName,
+    deviceHostname, // ADD this parameter
   }) => {
     try {
       // Find voucher
@@ -170,127 +176,110 @@ export const VoucherManager = {
         throw new Error("Voucher has expired");
       }
 
-      // Find or create user
-      let user = phone
-        ? await prisma.user.findUnique({ where: { phone } })
-        : null;
+      // Generate username from device hostname or create one
+      let username =
+        deviceHostname || `user_${Math.random().toString(36).substr(2, 9)}`;
 
-      const username =
-        user?.username || `user_${Math.random().toString(36).substr(2, 9)}`;
+      // Clean the username
+      const cleanUsername = username
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "")
+        .substring(0, 30);
+
+      console.log(`🆔 Using username from device: ${cleanUsername}`);
+
+      // Find or create user
+      let user = null;
+
+      // First try to find by username (device hostname)
+      if (cleanUsername) {
+        user = await prisma.user.findUnique({
+          where: { username: cleanUsername },
+        });
+
+        if (user) {
+          console.log(
+            `✅ Found existing user by device username: ${user.username}`
+          );
+        }
+      }
+
+      // If not found by username, try by phone
+      if (!user && phone) {
+        user = await prisma.user.findUnique({ where: { phone } });
+
+        if (user) {
+          console.log(`✅ Found existing user by phone: ${user.username}`);
+
+          // Update username to match device if different
+          if (cleanUsername && user.username !== cleanUsername) {
+            user = await prisma.user.update({
+              where: { id: user.id },
+              data: { username: cleanUsername },
+            });
+            console.log(`🔄 Updated username to device name: ${cleanUsername}`);
+          }
+        }
+      }
+
       const password = generateRandomPassword(8);
 
       if (!user) {
-        // Create new user with TEMP MAC
+        // Create new user with device-based username
         user = await prisma.user.create({
           data: {
             phone: phone || null,
-            username: username,
+            username: cleanUsername, // Use device hostname as username
             password: password,
             deviceName: deviceName,
-            macAddress: generateTempMac(), // Start with TEMP MAC
-            isTempMac: true,
+            macAddress: macAddress || generateTempMac(),
+            isTempMac: !macAddress, // Only temp if no MAC provided
             status: "ACTIVE",
             role: "USER",
           },
         });
 
         console.log(
-          `✅ Created user: ${username} with TEMP MAC: ${user.macAddress}`
+          `✅ Created user: ${cleanUsername} with ${
+            user.isTempMac ? "TEMP" : "REAL"
+          } MAC: ${user.macAddress}`
         );
-      } else if (!user.username || !user.password) {
-        // Update existing user with credentials and temp MAC if needed
+      } else if (!user.password) {
+        // Update existing user with credentials
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
-            username: username,
+            username: cleanUsername, // Update to device name
             password: password,
             deviceName: deviceName,
-            macAddress: user.macAddress || generateTempMac(),
-            isTempMac: user.macAddress ? user.isTempMac : true,
+            macAddress: user.macAddress || macAddress || generateTempMac(),
+            isTempMac: !(user.macAddress || macAddress),
           },
         });
 
-        console.log(`✅ Updated user: ${username}`);
+        console.log(`✅ Updated user credentials: ${cleanUsername}`);
       }
 
-      // Calculate subscription end time
-      const plan = voucher.plan;
-      const endTime = calculateEndTime(plan);
+      // ... rest of your existing voucher redemption code ...
 
-      // Create subscription
-      const subscription = await prisma.subscription.create({
-        data: {
-          userId: user.id,
-          planId: plan.id,
-          startTime: new Date(),
-          endTime: endTime,
-          status: "ACTIVE",
-        },
-      });
-
-      // Mark voucher as used
-      await prisma.voucher.update({
-        where: { id: voucher.id },
-        data: {
-          status: "USED",
-          usedAt: new Date(),
-          usedBy: user.id,
-          subscriptionId: subscription.id,
-        },
-      });
-
-      // Create initial router session
-      await prisma.routerSession.create({
-        data: {
-          userId: user.id,
-          planId: plan.id,
-          subscriptionId: subscription.id,
-          macAddress: user.macAddress,
-          ipAddress: ipAddress,
-          status: "PENDING", // Will become ACTIVE when real MAC is detected
-          loginTime: new Date(),
-        },
-      });
-
-      console.log(`✅ Voucher redeemed: ${voucherCode} by ${username}`);
-      console.log(
-        `📱 TEMP MAC assigned: ${user.macAddress} (will be updated on first login)`
-      );
-
-      // Send credentials via SMS if phone provided
-      if (phone) {
-        await sendCredentialsSMS(phone, {
-          username: user.username,
-          password: user.password,
-          plan: plan.name,
-          expiryDate: endTime,
-        });
-      }
-
+      // Update the instructions to show the device-based username
       return {
         success: true,
         message: "Voucher redeemed successfully",
         user: {
           id: user.id,
-          username: user.username,
+          username: user.username, // This will be the device hostname
           password: user.password,
           macAddress: user.macAddress,
           isTempMac: user.isTempMac,
         },
-        subscription: {
-          id: subscription.id,
-          planName: plan.name,
-          startTime: subscription.startTime,
-          endTime: endTime,
-          durationValue: plan.durationValue,
-          durationType: plan.durationType,
-        },
+        // ... rest of response ...
         instructions: {
           step1: "Connect to the WiFi network",
           step2: "Open any website in your browser",
           step3: `Login with username: ${user.username} and password: ${user.password}`,
           step4: "After logging in ONCE, future connections will be automatic!",
-          note: "Your device MAC will be detected automatically on first login",
+          note: `Your username "${user.username}" is based on your device name`,
         },
       };
     } catch (error) {
