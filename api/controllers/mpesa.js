@@ -9,8 +9,15 @@ import logger from "../utils/logger.js"; // ✅ use Winston logger
 export const startPayment = async (req, res) => {
   try {
     // ADD deviceHostname to the destructuring
-    const { phone, userId, planId, macAddress, deviceName, deviceHostname, suggestedUsername } =
-      req.body;
+    const {
+      phone,
+      userId,
+      planId,
+      macAddress,
+      deviceName,
+      deviceHostname,
+      suggestedUsername,
+    } = req.body;
 
     console.log("📥 Payment request received:", {
       phone,
@@ -40,10 +47,12 @@ export const startPayment = async (req, res) => {
         // Update user info
         if (deviceHostname && !user.username.includes(deviceHostname)) {
           // If we have device hostname, update username to match
-          const cleanHostname = deviceHostname.toLowerCase().replace(/[^a-z0-9-_]/g, '');
+          const cleanHostname = deviceHostname
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]/g, "");
           user.username = cleanHostname;
         }
-        
+
         if (macAddress || deviceName) {
           user = await prisma.user.update({
             where: { id: user.id },
@@ -60,17 +69,22 @@ export const startPayment = async (req, res) => {
 
     // If no user found by ID, try to find or create guest user
     if (!user) {
-      console.log("🔍 Looking for existing guest user by MAC/phone/username...");
+      console.log(
+        "🔍 Looking for existing guest user by MAC/phone/username..."
+      );
 
       // Generate username from device hostname or suggested username
       let username = deviceHostname || suggestedUsername;
       if (!username) {
         username = `user_${Math.random().toString(36).substring(2, 10)}`;
       }
-      
+
       // Clean the username
-      const cleanUsername = username.toLowerCase().replace(/[^a-z0-9-_]/g, '').substring(0, 30);
-      
+      const cleanUsername = username
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "")
+        .substring(0, 30);
+
       console.log(`🆔 Generated username from device: ${cleanUsername}`);
 
       // Try to find existing user by MAC, phone, OR username
@@ -95,10 +109,10 @@ export const startPayment = async (req, res) => {
       // Create new guest user if still not found
       if (!user) {
         console.log("🆕 Creating new user with device-based username...");
-        
+
         // Generate password for new user
         const password = Math.random().toString(36).substring(2, 10);
-        
+
         user = await prisma.user.create({
           data: {
             phone: phone || null,
@@ -115,7 +129,7 @@ export const startPayment = async (req, res) => {
         console.log(
           `✅ User created: ID=${user.id}, Username=${cleanUsername}, Password=${password}`
         );
-        
+
         // Optionally send credentials via SMS
         if (phone) {
           const message = `Your WiFi account created!\nUsername: ${cleanUsername}\nPassword: ${password}\n\nSave these credentials for future logins.`;
@@ -126,30 +140,88 @@ export const startPayment = async (req, res) => {
       } else {
         // Update existing user with latest info
         console.log("📝 Updating existing user with new info...");
-        
+
         const updateData = {
           ...(phone && { phone }),
           ...(macAddress && { macAddress }),
           ...(deviceName && { deviceName }),
           ...(deviceId && { deviceId }),
         };
-        
+
         // Update username if device hostname is provided and different
         if (deviceHostname && user.username !== cleanUsername) {
           updateData.username = cleanUsername;
         }
-        
+
         user = await prisma.user.update({
           where: { id: user.id },
           data: updateData,
         });
-        console.log(`✅ User ${user.id} updated with username: ${user.username}`);
+        console.log(
+          `✅ User ${user.id} updated with username: ${user.username}`
+        );
       }
     }
 
-    // ... rest of your existing payment code ...
+    // ✅ Create pending payment
+    const payment = await prisma.payment.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        amount: plan.price,
+        method: "MPESA",
+        status: "PENDING",
+      },
+    });
+
+    console.log(
+      `💰 Payment created: ID=${payment.id}, Amount: ${payment.amount}`
+    );
+
+    // ✅ Trigger STK push
+    const stkResponse = await initiateStkPush({
+      amount: plan.price,
+      phone: phone || user.phone,
+      accountRef: `WIFI-${payment.id}`,
+    });
+
+    // ✅ Save STK identifiers
+    if (stkResponse?.CheckoutRequestID) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          checkoutRequestId: stkResponse.CheckoutRequestID,
+          merchantRequestId: stkResponse.MerchantRequestID || null,
+        },
+      });
+    }
+
+    logger.info(
+      `📲 STK Push initiated: Payment ${payment.id} for User ${user.id} (${plan.name})`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "STK push initiated",
+      payment,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        macAddress: user.macAddress,
+      },
+      stkResponse,
+    });
+  } catch (error) {
+    console.error("❌ Payment error:", error);
+    console.error("Error stack:", error.stack);
+    logger.error(`STK push error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: "STK push failed",
+      error: error.message,
+    });
   }
-}
+};
 
 // paymentController.js or mpesaController.js
 
