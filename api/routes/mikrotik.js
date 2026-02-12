@@ -775,7 +775,6 @@ router.get("/mac-bypass", validateMikroTikKey, async (req, res) => {
   }
 });
 
-// Add this NEW endpoint to your mikrotik routes
 // This accepts MAC detection via GET instead of POST (workaround for MikroTik POST issues)
 
 router.get("/detect-mac-get", validateMikroTikKey, async (req, res) => {

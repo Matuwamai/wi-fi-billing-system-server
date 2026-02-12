@@ -9,61 +9,74 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ================================================
+// CORE USER MODEL
+// ================================================
 model User {
-  id              Int              @id @default(autoincrement())
-  phone           String?          @unique // Make it nullable with ?
-  macAddress      String?
-  password        String?
-  username        String?          @unique // Add username field
-  deviceName      String?
-  role            String?          @default("USER")
-  deviceId        String?          @unique
-  isGuest         Boolean          @default(false)
-  status          UserStatus       @default(ACTIVE)
-  isTempMac       Boolean          @default(false)
-  lastMacUpdate   DateTime?
-  lastLogin       DateTime?
-  subscriptions   Subscription[]
-  routerSessions  RouterSession[]
-  payments        Payment[]
-  vouchers        Voucher[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  tempDeviceLinks TempDeviceLink[]
+  id            Int            @id @default(autoincrement())
+  phone         String?        @unique
+  username      String?        @unique
+  password      String?
+  deviceName    String?
+  role          String?        @default("USER")
+  isGuest       Boolean        @default(false)
+  status        UserStatus     @default(ACTIVE)
+  lastLogin     DateTime?
+  subscriptions Subscription[]
+  payments      Payment[]
+  vouchers      Voucher[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Removed: macAddress, isTempMac, lastMacUpdate, deviceId
+  // Removed: routerSessions, tempDeviceLinks
+  // Reason: RADIUS (radacct) now tracks MAC, IP, and sessions automatically
 }
 
+// ================================================
+// PLAN MODEL
+// ================================================
 model Plan {
-  id            Int             @id @default(autoincrement())
+  id            Int            @id @default(autoincrement())
   name          String
   description   String?
-  durationType  DurationType // hour, day, week, month
-  durationValue Int // e.g. 1, 6, 30
+  durationType  DurationType
+  durationValue Int
   price         Float
-  paments       Payment[]
+  rateLimit     String         @default("10M/10M") // e.g "5M/2M" = 5Mbps down, 2Mbps up
+  dataLimit     BigInt? // Optional data cap in bytes (null = unlimited)
   subscriptions Subscription[]
+  payments      Payment[]
   vouchers      Voucher[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  RouterSession RouterSession[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 }
 
+// ================================================
+// SUBSCRIPTION MODEL
+// ================================================
 model Subscription {
-  id            Int                @id @default(autoincrement())
-  userId        Int
-  planId        Int
-  startTime     DateTime           @default(now())
-  endTime       DateTime
-  status        SubscriptionStatus @default(ACTIVE)
-  paymentId     Int?
-  user          User               @relation(fields: [userId], references: [id])
-  plan          Plan               @relation(fields: [planId], references: [id])
-  payment       Payment?           @relation(fields: [paymentId], references: [id])
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  RouterSession RouterSession[]
-  vouchers      Voucher[]
+  id        Int                @id @default(autoincrement())
+  userId    Int
+  planId    Int
+  startTime DateTime           @default(now())
+  endTime   DateTime
+  status    SubscriptionStatus @default(ACTIVE)
+  paymentId Int?
+  user      User               @relation(fields: [userId], references: [id])
+  plan      Plan               @relation(fields: [planId], references: [id])
+  payment   Payment?           @relation(fields: [paymentId], references: [id])
+  vouchers  Voucher[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  // Removed: RouterSession relation
+  // Reason: RADIUS (radacct) tracks sessions now
 }
 
+// ================================================
+// PAYMENT MODEL
+// ================================================
 model Payment {
   id                Int            @id @default(autoincrement())
   userId            Int
@@ -81,38 +94,19 @@ model Payment {
   subscription      Subscription[]
 }
 
-model RouterSession {
-  id             Int          @id @default(autoincrement())
-  userId         Int
-  planId         Int
-  subscriptionId Int
-  macAddress     String? // Add MAC address
-  ipAddress      String? // Add IP address
-  status         String       @default("ACTIVE")
-  loginTime      DateTime     @default(now()) // Rename from startedAt
-  logoutTime     DateTime? // Add logout time
-  duration       Int? // Add duration in minutes
-  startedAt      DateTime     @default(now())
-  endedAt        DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  user           User         @relation(fields: [userId], references: [id])
-  plan           Plan         @relation(fields: [planId], references: [id])
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
-}
-
-// Add this to your schema.prisma
-
+// ================================================
+// VOUCHER MODEL
+// ================================================
 model Voucher {
   id             Int           @id @default(autoincrement())
-  code           String        @unique // Voucher code (e.g., ABCD-EFGH-IJKL)
+  code           String        @unique
   planId         Int
   status         VoucherStatus @default(UNUSED)
-  expiresAt      DateTime // When the voucher expires
-  usedAt         DateTime? // When it was redeemed
-  usedBy         Int? // User who redeemed it
-  subscriptionId Int? // Subscription created from this voucher
-  createdBy      Int? // Admin who created it
+  expiresAt      DateTime
+  usedAt         DateTime?
+  usedBy         Int?
+  subscriptionId Int?
+  createdBy      Int?
   plan           Plan          @relation(fields: [planId], references: [id])
   user           User?         @relation(fields: [usedBy], references: [id])
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
@@ -120,38 +114,95 @@ model Voucher {
   updatedAt      DateTime      @updatedAt
 }
 
-model SyncLog {
-  id        String   @id @default(cuid())
-  routerId  String? // MikroTik router ID
-  ipAddress String? // Router IP
-  userAgent String? // RouterOS version
-  userCount Int
-  success   Boolean
-  error     String?
-  createdAt DateTime @default(now())
+// ================================================
+// RADIUS TABLES
+// FreeRADIUS reads/writes these directly
+// ================================================
+
+// Stores user credentials for authentication
+model RadCheck {
+  id        Int    @id @default(autoincrement())
+  username  String @db.VarChar(64)
+  attribute String @db.VarChar(64)
+  op        String @default(":=") @db.VarChar(2)
+  value     String @db.VarChar(253)
+
+  @@index([username])
+  @@map("radcheck")
 }
 
-model TempDeviceLink {
-  id         Int      @id @default(autoincrement())
-  token      String   @unique
-  userId     Int
-  realMac    String? // Real MAC when detected
-  deviceName String?
-  expiresAt  DateTime
-  used       Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+// Stores attributes returned to MikroTik after login
+// e.g. speed limits, session timeout
+model RadReply {
+  id        Int    @id @default(autoincrement())
+  username  String @db.VarChar(64)
+  attribute String @db.VarChar(64)
+  op        String @default("=") @db.VarChar(2)
+  value     String @db.VarChar(253)
 
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([token])
-  @@index([expiresAt])
+  @@index([username])
+  @@map("radreply")
 }
 
+// RADIUS accounting - Replaces RouterSession completely
+// MikroTik writes here automatically on: login, update, logout
+// callingstationid = MAC address of the device
+// framedipaddress  = IP address assigned to device
+model RadAcct {
+  radacctid          BigInt    @id @default(autoincrement())
+  acctsessionid      String    @db.VarChar(64)
+  acctuniqueid       String    @unique @db.VarChar(32)
+  username           String    @db.VarChar(64)
+  realm              String?   @db.VarChar(64)
+  nasipaddress       String    @db.VarChar(15)
+  nasportid          String?   @db.VarChar(32)
+  nasporttype        String?   @db.VarChar(32)
+  acctstarttime      DateTime?
+  acctupdatetime     DateTime?
+  acctstoptime       DateTime?
+  acctsessiontime    Int?      @db.UnsignedInt
+  acctauthentic      String?   @db.VarChar(32)
+  connectinfo_start  String?   @db.VarChar(128)
+  connectinfo_stop   String?   @db.VarChar(128)
+  acctinputoctets    BigInt?
+  acctoutputoctets   BigInt?
+  calledstationid    String?   @db.VarChar(50)
+  callingstationid   String?   @db.VarChar(50) // MAC address of device
+  acctterminatecause String?   @db.VarChar(32)
+  servicetype        String?   @db.VarChar(32)
+  framedprotocol     String?   @db.VarChar(32)
+  framedipaddress    String?   @db.VarChar(15) // IP address assigned
+
+  @@index([username])
+  @@index([acctsessionid])
+  @@index([acctstarttime])
+  @@index([acctstoptime])
+  @@index([nasipaddress])
+  @@index([callingstationid])
+  @@map("radacct")
+}
+
+// Your MikroTik routers - RADIUS clients
+model RadNas {
+  id          Int     @id @default(autoincrement())
+  nasname     String  @unique @db.VarChar(128)
+  shortname   String  @db.VarChar(32)
+  type        String  @default("other") @db.VarChar(30)
+  ports       Int?
+  secret      String  @db.VarChar(60)
+  server      String? @db.VarChar(64)
+  community   String? @db.VarChar(50)
+  description String? @db.VarChar(200)
+
+  @@map("nas")
+}
+
+// ================================================
+// ENUMS
+// ================================================
 enum UserRole {
   ADMIN
   USER
-  // GUEST
 }
 
 enum VoucherStatus {
