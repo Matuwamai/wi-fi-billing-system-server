@@ -1,5 +1,6 @@
 // services/VoucherManager.js
 import prisma from "../config/db.js";
+import RadiusManager from "./RadiusManager.js";
 import crypto from "crypto";
 import { addHours, addDays, addWeeks, addMonths } from "date-fns";
 import { RouterSessionManager } from "./routerSessionService.js";
@@ -43,7 +44,7 @@ function generateRandomPassword(length = 8) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   return Array.from(
     { length },
-    () => chars[Math.floor(Math.random() * chars.length)]
+    () => chars[Math.floor(Math.random() * chars.length)],
   ).join("");
 }
 
@@ -53,7 +54,7 @@ function generateTempMac() {
     Math.floor(Math.random() * 256)
       .toString(16)
       .padStart(2, "0")
-      .toUpperCase()
+      .toUpperCase(),
   ).join(":");
 
   return `02:00:00:${randomBytes}`;
@@ -83,80 +84,9 @@ Enjoy your internet!
 
 export const VoucherManager = {
   /**
-   * Create voucher with subscription (Admin function)
+   * Redeem voucher - Now creates RADIUS user instead of sync
    */
-
-  /**
-   * Redeem voucher and create subscription with temp MAC
-   */
-
-  createVoucher: async ({
-    planId,
-    quantity = 1,
-    expiresInDays = 30,
-    adminId,
-  }) => {
-    try {
-      // Get plan details
-      const plan = await prisma.plan.findUnique({
-        where: { id: planId },
-      });
-
-      if (!plan) throw new Error("Plan not found");
-
-      const vouchers = [];
-      const expiryDate = addDays(new Date(), expiresInDays);
-
-      // Create multiple vouchers if quantity > 1
-      for (let i = 0; i < quantity; i++) {
-        let voucherCode;
-        let isUnique = false;
-
-        // Ensure unique voucher code
-        while (!isUnique) {
-          voucherCode = generateVoucherCode();
-          const existing = await prisma.voucher.findUnique({
-            where: { code: voucherCode },
-          });
-          isUnique = !existing;
-        }
-
-        // Create voucher in database
-        const voucher = await prisma.voucher.create({
-          data: {
-            code: voucherCode,
-            planId: plan.id,
-            status: "UNUSED",
-            expiresAt: expiryDate,
-            createdBy: adminId,
-          },
-          include: {
-            plan: true,
-          },
-        });
-
-        vouchers.push(voucher);
-        console.log(`✅ Voucher created: ${voucherCode} (Plan: ${plan.name})`);
-      }
-
-      return vouchers;
-    } catch (error) {
-      console.error("❌ Voucher creation error:", error.message);
-      throw error;
-    }
-  },
-
-  /**
-   * Redeem voucher and create subscription with device-based username
-   */
-  redeemVoucher: async ({
-    voucherCode,
-    phone,
-    macAddress,
-    ipAddress,
-    deviceName,
-    deviceHostname,
-  }) => {
+  redeemVoucher: async ({ voucherCode, phone, deviceName }) => {
     try {
       // Find voucher
       const voucher = await prisma.voucher.findUnique({
@@ -176,109 +106,44 @@ export const VoucherManager = {
         throw new Error("Voucher has expired");
       }
 
-      // Generate temp token for device matching (valid for 30 minutes)
-      const tempToken = Math.random()
-        .toString(36)
-        .substring(2, 15)
-        .toUpperCase();
-      const tempTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-
-      // Generate username from device hostname or create one
-      let username = `temp_${tempToken}`; // Start with temp username
-      let finalUsername = username; // Will be updated when real device connects
-
-      // Also prepare a clean version of device hostname for later
-      let cleanDeviceHostname = null;
-      if (deviceHostname && deviceHostname !== "unknown") {
-        cleanDeviceHostname = deviceHostname
-          .toLowerCase()
-          .replace(/[^a-z0-9-_]/g, "")
-          .substring(0, 30);
-      }
-
-      console.log(
-        `🆔 Temp username: ${username}, Device hostname: ${
-          cleanDeviceHostname || "none"
-        }`
-      );
-
       // Find or create user
-      let user = null;
+      let user = phone
+        ? await prisma.user.findUnique({ where: { phone } })
+        : null;
 
-      // Stage 1: Try to find by phone
-      if (phone) {
-        user = await prisma.user.findUnique({ where: { phone } });
-        if (user) {
-          console.log(`✅ Found existing user by phone: ${user.username}`);
-        }
-      }
-
-      // Stage 2: Try to find by device hostname
-      if (!user && cleanDeviceHostname) {
-        user = await prisma.user.findFirst({
-          where: {
-            username: cleanDeviceHostname,
-            isTempMac: true, // Only match temp users
-          },
-        });
-        if (user) {
-          console.log(
-            `✅ Found existing user by device hostname: ${user.username}`
-          );
-        }
-      }
-
+      const username =
+        user?.username || `user_${Math.random().toString(36).substr(2, 9)}`;
       const password = generateRandomPassword(8);
 
       if (!user) {
-        // Create new user with TEMP credentials
+        // Create new user
         user = await prisma.user.create({
           data: {
             phone: phone || null,
-            username: username, // Start with temp username
+            username: username,
             password: password,
-            deviceName: deviceName || "Unknown Device",
-            macAddress: macAddress || generateTempMac(),
-            isTempMac: true, // Always temp initially
+            deviceName: deviceName,
             status: "ACTIVE",
             role: "USER",
-            tempAccessToken: tempToken,
-            tempTokenExpiry: tempTokenExpiry,
           },
         });
 
-        console.log(
-          `✅ Created user with temp token: ${tempToken}, Username: ${username}`
-        );
-      } else {
+        console.log(`✅ Created user: ${username}`);
+      } else if (!user.username || !user.password) {
         // Update existing user
-        const updateData = {
-          password: password,
-          deviceName: deviceName || user.deviceName,
-          tempAccessToken: tempToken,
-          tempTokenExpiry: tempTokenExpiry,
-          updatedAt: new Date(),
-        };
-
-        // Update MAC if provided
-        if (macAddress) {
-          updateData.macAddress = macAddress;
-          updateData.isTempMac = false;
-        }
-
         user = await prisma.user.update({
           where: { id: user.id },
-          data: updateData,
+          data: {
+            username: username,
+            password: password,
+            deviceName: deviceName,
+          },
         });
-
-        console.log(
-          `✅ Updated user ${user.username} with temp token: ${tempToken}`
-        );
       }
 
       // Calculate subscription end time
       const plan = voucher.plan;
-      const endTime = calculateEndTime(plan);
+      const endTime = calculateEndTime(plan.durationType, plan.durationValue);
 
       // Create subscription
       const subscription = await prisma.subscription.create({
@@ -289,6 +154,14 @@ export const VoucherManager = {
           endTime: endTime,
           status: "ACTIVE",
         },
+      });
+
+      // **KEY CHANGE: Create RADIUS user instead of temp MAC**
+      const planProfile = getPlanProfile(plan);
+      await RadiusManager.createRadiusUser({
+        username: user.username,
+        password: user.password,
+        planProfile: planProfile,
       });
 
       // Mark voucher as used
@@ -302,79 +175,39 @@ export const VoucherManager = {
         },
       });
 
-      // Create router session with temp MAC
-      await prisma.routerSession.create({
-        data: {
-          userId: user.id,
-          planId: plan.id,
-          subscriptionId: subscription.id,
-          macAddress: user.macAddress,
-          ipAddress: ipAddress,
-          status: "PENDING", // Will become ACTIVE when real MAC is detected
-          loginTime: new Date(),
-        },
-      });
-
-      console.log(`✅ Voucher redeemed: ${voucherCode} for ${user.username}`);
-      console.log(
-        `📱 Temp token: ${tempToken} (expires: ${tempTokenExpiry.toISOString()})`
-      );
+      console.log(`✅ Voucher redeemed: ${voucherCode} by ${username}`);
 
       // Send credentials via SMS if phone provided
       if (phone) {
         await sendCredentialsSMS(phone, {
-          username: user.username, // This is temp_ABC123
+          username: user.username,
           password: user.password,
           plan: plan.name,
           expiryDate: endTime,
-          tempToken: tempToken, // Include in SMS
-          instructions:
-            "Your device will be automatically detected when you connect to WiFi",
         });
       }
 
       return {
         success: true,
         message: "Voucher redeemed successfully",
-        tempToken: tempToken, // Send to frontend
-        credentials: {
-          username: user.username, // temp_ABC123
-          password: user.password,
-          ssid: "Your-WiFi-Network", // You should define this
-          tempToken: tempToken,
-        },
         user: {
           id: user.id,
           username: user.username,
           password: user.password,
-          macAddress: user.macAddress,
-          isTempMac: user.isTempMac,
-          hasRealDeviceName: !!cleanDeviceHostname,
-          suggestedRealUsername: cleanDeviceHostname,
         },
         subscription: {
           id: subscription.id,
           planName: plan.name,
           startTime: subscription.startTime,
           endTime: endTime,
-          durationValue: plan.durationValue,
-          durationType: plan.durationType,
+          speedLimit: planProfile.rateLimit,
         },
         instructions: {
-          step1: `Connect to WiFi: Your-WiFi-Network`,
-          step2: `Username: ${user.username}`,
-          step3: `Password: ${user.password}`,
-          step4: "Your device will be automatically recognized",
-          step5: `Temporary code: ${tempToken} (for automatic matching)`,
-          note: "After first login, your device name will be used as your username",
-        },
-        nextSteps: {
-          autoDetection:
-            "When you connect to WiFi, your device will be automatically detected",
-          usernameUpdate: `Your username will change to "${
-            cleanDeviceHostname || "your-device-name"
-          }" after detection`,
-          validity: `Access valid until: ${endTime.toLocaleDateString()}`,
+          step1: "Connect to the WiFi network",
+          step2: "Open any website in your browser",
+          step3: `Login with username: ${user.username} and password: ${user.password}`,
+          step4: "Enjoy your internet!",
+          note: "Your device will be automatically recognized on login",
         },
       };
     } catch (error) {
@@ -383,144 +216,95 @@ export const VoucherManager = {
     }
   },
 
-  checkVoucher: async (voucherCode) => {
-    try {
-      const voucher = await prisma.voucher.findUnique({
-        where: { code: voucherCode.toUpperCase().replace(/\s/g, "") },
-        include: {
-          plan: true,
-        },
-      });
-
-      if (!voucher) {
-        return { valid: false, message: "Invalid voucher code" };
-      }
-
-      if (voucher.status === "USED") {
-        return {
-          valid: false,
-          message: "Voucher has already been used",
-          usedAt: voucher.usedAt,
-        };
-      }
-
-      if (
-        voucher.status === "EXPIRED" ||
-        new Date() > new Date(voucher.expiresAt)
-      ) {
-        return {
-          valid: false,
-          message: "Voucher has expired",
-          expiresAt: voucher.expiresAt,
-        };
-      }
-
-      return {
-        valid: true,
-        voucher: {
-          code: voucher.code,
-          plan: voucher.plan,
-          expiresAt: voucher.expiresAt,
-        },
-        message: `Valid voucher for ${voucher.plan.name}`,
-      };
-    } catch (error) {
-      console.error("❌ Voucher check error:", error.message);
-      throw error;
-    }
-  },
-
   /**
-   * List all vouchers (Admin function)
+   * Handle subscription expiry - Remove RADIUS user
    */
-  listVouchers: async ({ status, planId, page = 1, limit = 50 }) => {
+  expireSubscription: async (subscriptionId) => {
     try {
-      const where = {};
-      if (status) where.status = status;
-      if (planId) where.planId = planId;
-
-      const [vouchers, total] = await Promise.all([
-        prisma.voucher.findMany({
-          where,
-          include: {
-            plan: true,
-            user: {
-              select: {
-                id: true,
-                phone: true,
-                username: true,
-              },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-          skip: (page - 1) * limit,
-          take: limit,
-        }),
-        prisma.voucher.count({ where }),
-      ]);
-
-      return {
-        vouchers,
-        pagination: {
-          total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit),
-        },
-      };
-    } catch (error) {
-      console.error("❌ List vouchers error:", error.message);
-      throw error;
-    }
-  },
-
-  /**
-   * Expire unused vouchers
-   */
-  expireVouchers: async () => {
-    try {
-      const result = await prisma.voucher.updateMany({
-        where: {
-          status: "UNUSED",
-          expiresAt: { lt: new Date() },
-        },
-        data: {
-          status: "EXPIRED",
-        },
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: { user: true },
       });
 
-      console.log(`✅ Expired ${result.count} unused vouchers`);
-      return result;
-    } catch (error) {
-      console.error("❌ Expire vouchers error:", error.message);
-      throw error;
-    }
-  },
-
-  /**
-   * Delete voucher (Admin function)
-   */
-  deleteVoucher: async (voucherId) => {
-    try {
-      const voucher = await prisma.voucher.findUnique({
-        where: { id: voucherId },
-      });
-
-      if (!voucher) throw new Error("Voucher not found");
-
-      if (voucher.status === "USED") {
-        throw new Error("Cannot delete used voucher");
+      if (!subscription) {
+        throw new Error("Subscription not found");
       }
 
-      await prisma.voucher.delete({
-        where: { id: voucherId },
+      // Update subscription status
+      await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: { status: "EXPIRED" },
       });
 
-      console.log(`✅ Voucher deleted: ${voucher.code}`);
-      return { success: true, message: "Voucher deleted successfully" };
+      // **Remove RADIUS user**
+      await RadiusManager.deleteRadiusUser(subscription.user.username);
+
+      console.log(`✅ Subscription expired: ${subscription.user.username}`);
+
+      return { success: true };
     } catch (error) {
-      console.error("❌ Delete voucher error:", error.message);
+      console.error("❌ Subscription expiry error:", error);
       throw error;
     }
   },
 };
+
+// Helper: Get plan profile configuration
+function getPlanProfile(plan) {
+  const profiles = {
+    // Speed limits in format: "download/upload"
+    "1 Hour": { rateLimit: "5M/5M", sessionTimeout: 3600 },
+    "1 Day": { rateLimit: "10M/10M", sessionTimeout: 86400 },
+    "1 Week": { rateLimit: "10M/10M", sessionTimeout: null },
+    "1 Month": { rateLimit: "15M/15M", sessionTimeout: null },
+  };
+
+  return profiles[plan.name] || { rateLimit: "10M/10M", sessionTimeout: null };
+}
+
+// Helper: Calculate end time
+function calculateEndTime(durationType, durationValue) {
+  const now = new Date();
+
+  switch (durationType) {
+    case "MINUTE":
+      return new Date(now.getTime() + durationValue * 60 * 1000);
+    case "HOUR":
+      return new Date(now.getTime() + durationValue * 60 * 60 * 1000);
+    case "DAY":
+      return new Date(now.getTime() + durationValue * 24 * 60 * 60 * 1000);
+    case "WEEK":
+      return new Date(now.getTime() + durationValue * 7 * 24 * 60 * 60 * 1000);
+    case "MONTH":
+      const endDate = new Date(now);
+      endDate.setMonth(endDate.getMonth() + durationValue);
+      return endDate;
+    default:
+      return new Date(now.getTime() + durationValue * 24 * 60 * 60 * 1000);
+  }
+}
+
+function generateRandomPassword(length = 8) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from(
+    { length },
+    () => chars[Math.floor(Math.random() * chars.length)],
+  ).join("");
+}
+
+async function sendCredentialsSMS(phone, credentials) {
+  const message = `
+WiFi Access Activated!
+
+Username: ${credentials.username}
+Password: ${credentials.password}
+
+Plan: ${credentials.plan}
+Valid until: ${credentials.expiryDate.toLocaleDateString()}
+
+Connect to WiFi, open browser, and login. Enjoy!
+  `.trim();
+
+  console.log(`📱 SMS to ${phone}:`, message);
+  // TODO: Integrate SMS provider
+}

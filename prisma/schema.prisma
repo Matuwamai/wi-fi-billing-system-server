@@ -27,15 +27,8 @@ model User {
   vouchers      Voucher[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-
-  // Removed: macAddress, isTempMac, lastMacUpdate, deviceId
-  // Removed: routerSessions, tempDeviceLinks
-  // Reason: RADIUS (radacct) now tracks MAC, IP, and sessions automatically
 }
 
-// ================================================
-// PLAN MODEL
-// ================================================
 model Plan {
   id            Int            @id @default(autoincrement())
   name          String
@@ -44,7 +37,7 @@ model Plan {
   durationValue Int
   price         Float
   rateLimit     String         @default("10M/10M") // e.g "5M/2M" = 5Mbps down, 2Mbps up
-  dataLimit     BigInt? // Optional data cap in bytes (null = unlimited)
+  dataLimit     BigInt?
   subscriptions Subscription[]
   payments      Payment[]
   vouchers      Voucher[]
@@ -52,9 +45,6 @@ model Plan {
   updatedAt     DateTime       @updatedAt
 }
 
-// ================================================
-// SUBSCRIPTION MODEL
-// ================================================
 model Subscription {
   id        Int                @id @default(autoincrement())
   userId    Int
@@ -69,14 +59,8 @@ model Subscription {
   vouchers  Voucher[]
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
-
-  // Removed: RouterSession relation
-  // Reason: RADIUS (radacct) tracks sessions now
 }
 
-// ================================================
-// PAYMENT MODEL
-// ================================================
 model Payment {
   id                Int            @id @default(autoincrement())
   userId            Int
@@ -94,9 +78,6 @@ model Payment {
   subscription      Subscription[]
 }
 
-// ================================================
-// VOUCHER MODEL
-// ================================================
 model Voucher {
   id             Int           @id @default(autoincrement())
   code           String        @unique
@@ -113,11 +94,6 @@ model Voucher {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 }
-
-// ================================================
-// RADIUS TABLES
-// FreeRADIUS reads/writes these directly
-// ================================================
 
 // Stores user credentials for authentication
 model RadCheck {
@@ -195,6 +171,37 @@ model RadNas {
   description String? @db.VarChar(200)
 
   @@map("nas")
+}
+
+model radusergroup {
+  id        Int    @id @default(autoincrement())
+  username  String @default("")
+  groupname String @default("")
+  priority  Int    @default(1)
+}
+
+model radgroupcheck {
+  id        Int    @id @default(autoincrement())
+  groupname String @default("")
+  attribute String @default("")
+  op        String @default("==") @db.Char(2)
+  value     String @default("")
+}
+
+model radgroupreply {
+  id        Int    @id @default(autoincrement())
+  groupname String @default("")
+  attribute String @default("")
+  op        String @default("=") @db.Char(2)
+  value     String @default("")
+}
+
+model radpostauth {
+  id       Int      @id @default(autoincrement())
+  username String   @default("")
+  pass     String   @default("")
+  reply    String   @default("")
+  authdate DateTime @default(now())
 }
 
 // ================================================
