@@ -11,7 +11,7 @@ import routerSessionRoutes from "./routes/routerSession.js";
 import voucherRouetes from "./routes/voucher.js";
 import autRoutes from "./routes/auth.js";
 import analyticRoute from "./routes/analytics.js";
-import mikrotikRoutes from "./routes/mikrotik.js"; // ADD THIS
+import radiusRoutes from "./routes/radius.js";
 import logger from "./utils/logger.js";
 
 dotenv.config();
@@ -35,7 +35,7 @@ app.use("/api/mpesa", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);
 app.use("/api/auth", autRoutes);
 app.use("/api/analytics", analyticRoute);
-app.use("/api/mikrotik", mikrotikRoutes); // ADD THIS
+app.use("/api/radius", radiusRoutes);
 
 // Error handler
 app.use(errorHandler);
