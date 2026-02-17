@@ -1,112 +1,204 @@
-// api/controllers/subscriptionController.js
+// controllers/subscriptionController.js
 import prisma from "../config/db.js";
-import { add } from "date-fns";
+import {
+  expireSubscription,
+  expireStaleSubscriptions,
+  getUserSubscriptions,
+  getActiveSubscription,
+} from "../services/subscriptionService.js";
+import { RadiusManager } from "../services/RadiusManager.js";
+import logger from "../utils/logger.js";
 
 /**
- * Create a new subscription (after payment or free trial)
+ * GET /api/subscriptions
+ * Admin: list all subscriptions with pagination
  */
-export const createSubscription = async (req, res, next) => {
+export const listSubscriptions = async (req, res) => {
   try {
-    const { planId } = req.body;
+    const { status, userId, limit = 50, offset = 0 } = req.query;
+
+    const where = {};
+    if (status) where.status = status;
+    if (userId) where.userId = Number(userId);
+
+    const [subscriptions, total] = await Promise.all([
+      prisma.subscription.findMany({
+        where,
+        include: {
+          user: {
+            select: { id: true, username: true, phone: true, deviceName: true },
+          },
+          plan: { select: { id: true, name: true, rateLimit: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.subscription.count({ where }),
+    ]);
+
+    return res.status(200).json({ success: true, total, data: subscriptions });
+  } catch (error) {
+    logger.error(`❌ listSubscriptions: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to list subscriptions" });
+  }
+};
+
+/**
+ * GET /api/subscriptions/my
+ * User: get own subscriptions
+ */
+export const getMySubscriptions = async (req, res) => {
+  try {
     const userId = req.user.id;
+    const subs = await getUserSubscriptions(userId);
+    return res.status(200).json({ success: true, data: subs });
+  } catch (error) {
+    logger.error(`❌ getMySubscriptions: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch subscriptions" });
+  }
+};
 
-    const plan = await prisma.plan.findUnique({ where: { id: Number(planId) } });
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+/**
+ * GET /api/subscriptions/my/active
+ * User: get current active subscription
+ */
+export const getMyActiveSubscription = async (req, res) => {
+  try {
+    const sub = await getActiveSubscription(req.user.id);
+    if (!sub) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No active subscription" });
+    }
+    return res.status(200).json({ success: true, data: sub });
+  } catch (error) {
+    logger.error(`❌ getMyActiveSubscription: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch subscription" });
+  }
+};
 
-    // Calculate end date
-    let endTime = new Date();
-    switch (plan.durationType) {
-      case "HOUR":
-        endTime = add(new Date(), { hours: plan.durationValue });
-        break;
-      case "DAY":
-        endTime = add(new Date(), { days: plan.durationValue });
-        break;
-      case "WEEK":
-        endTime = add(new Date(), { weeks: plan.durationValue });
-        break;
-      case "MONTH":
-        endTime = add(new Date(), { months: plan.durationValue });
-        break;
+/**
+ * GET /api/subscriptions/:id
+ * Get a single subscription by ID
+ */
+export const getSubscription = async (req, res) => {
+  try {
+    const sub = await prisma.subscription.findUnique({
+      where: { id: Number(req.params.id) },
+      include: {
+        user: { select: { id: true, username: true, phone: true } },
+        plan: true,
+        payment: true,
+      },
+    });
+
+    if (!sub) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Subscription not found" });
     }
 
-    // Create subscription record
-    const subscription = await prisma.subscription.create({
+    // Non-admin users can only see their own
+    if (req.user.role !== "ADMIN" && sub.userId !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    return res.status(200).json({ success: true, data: sub });
+  } catch (error) {
+    logger.error(`❌ getSubscription: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch subscription" });
+  }
+};
+
+/**
+ * POST /api/subscriptions/:id/expire
+ * Admin: manually expire a subscription and remove RADIUS access
+ */
+export const manualExpire = async (req, res) => {
+  try {
+    const result = await expireSubscription(Number(req.params.id));
+    return res
+      .status(200)
+      .json({ success: true, message: "Subscription expired", ...result });
+  } catch (error) {
+    logger.error(`❌ manualExpire: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * POST /api/subscriptions/expire-stale
+ * Admin: batch-expire all overdue subscriptions (also called by cron)
+ */
+export const runExpireStale = async (req, res) => {
+  try {
+    const result = await expireStaleSubscriptions();
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    logger.error(`❌ runExpireStale: ${error.message}`);
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to expire stale subscriptions",
+      });
+  }
+};
+
+/**
+ * GET /api/subscriptions/:id/usage
+ * Get data usage & active session info for a subscription's user
+ */
+export const getSubscriptionUsage = async (req, res) => {
+  try {
+    const sub = await prisma.subscription.findUnique({
+      where: { id: Number(req.params.id) },
+      include: { user: true },
+    });
+
+    if (!sub) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Subscription not found" });
+    }
+
+    if (req.user.role !== "ADMIN" && sub.userId !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const [usage, sessions, macInfo] = await Promise.all([
+      RadiusManager.getUserDataUsage(sub.user.username, sub.startTime),
+      RadiusManager.getActiveSessions(sub.user.username),
+      RadiusManager.getActiveMacAddress(sub.user.username),
+    ]);
+
+    return res.status(200).json({
+      success: true,
       data: {
-        userId,
-        planId: plan.id,
-        endTime,
-        status: "ACTIVE",
+        subscription: {
+          id: sub.id,
+          status: sub.status,
+          startTime: sub.startTime,
+          endTime: sub.endTime,
+        },
+        usage,
+        activeSessions: sessions.length,
+        device: macInfo,
       },
-      include: {
-        plan: true,
-      },
-    });
-
-    res.status(201).json({
-      message: "Subscription created successfully",
-      subscription,
     });
   } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Get current user's subscriptions
- */
-export const getUserSubscriptions = async (req, res, next) => {
-  try {
-    const userId = req.user.id;
-
-    const subscriptions = await prisma.subscription.findMany({
-      where: { userId },
-      include: { plan: true },
-      orderBy: { createdAt: "desc" },
-    });
-
-    res.status(200).json(subscriptions);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Admin — get all subscriptions
- */
-export const getAllSubscriptions = async (req, res, next) => {
-  try {
-    const subscriptions = await prisma.subscription.findMany({
-      include: {
-        user: { select: { phone: true } },
-        plan: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    res.status(200).json(subscriptions);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Check and expire ended subscriptions (can be called by cron job)
- */
-export const checkAndExpireSubscriptions = async (req, res, next) => {
-  try {
-    const now = new Date();
-
-    const expired = await prisma.subscription.updateMany({
-      where: {
-        endTime: { lt: now },
-        status: "ACTIVE",
-      },
-      data: { status: "EXPIRED" },
-    });
-
-    res.status(200).json({ message: "Expired subscriptions updated", expiredCount: expired.count });
-  } catch (error) {
-    next(error);
+    logger.error(`❌ getSubscriptionUsage: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get usage" });
   }
 };
