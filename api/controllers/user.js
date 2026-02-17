@@ -1,165 +1,335 @@
-import { UserRole } from "@prisma/client";
+// controllers/userController.js
 import prisma from "../config/db.js";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { RadiusManager } from "../services/RadiusManager.js";
+import { getActiveSubscription } from "../services/subscriptionService.js";
+import logger from "../utils/logger.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
 
-//  Create Guest User (auto-generated for short-time users)
-export const createGuestUser = async (req, res, next) => {
+const safeUser = (user) => ({
+  id: user.id,
+  phone: user.phone,
+  username: user.username,
+  deviceName: user.deviceName,
+  role: user.role,
+  isGuest: user.isGuest,
+  status: user.status,
+  lastLogin: user.lastLogin,
+  createdAt: user.createdAt,
+});
+
+// ─────────────────────────────────────────────
+// ADMIN CONTROLLERS
+// ─────────────────────────────────────────────
+
+/**
+ * GET /api/users
+ * Admin: list all users with optional search & pagination
+ */
+export const listUsers = async (req, res) => {
   try {
-    const { deviceIdName, phone } = req.body;
+    const { search, status, role, isGuest, limit = 50, offset = 0 } = req.query;
 
-    if (!deviceIdName) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Device ID is required" });
+    const where = {};
+    if (status) where.status = status;
+    if (role) where.role = role;
+    if (isGuest !== undefined) where.isGuest = isGuest === "true";
+
+    if (search) {
+      where.OR = [
+        { phone: { contains: search } },
+        { username: { contains: search } },
+        { deviceName: { contains: search } },
+      ];
     }
 
-    // Check if guest already exists
-    let user = await prisma.user.findUnique({
-      where: { deviceId },
-    });
-
-    // If not found, create a new guest user
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          phone: `guest_${deviceId}`,
-          password: await bcrypt.hash("guest_temp", 10),
-          deviceId,
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          phone: true,
+          username: true,
+          deviceName: true,
+          role: true,
           isGuest: true,
+          status: true,
+          lastLogin: true,
+          createdAt: true,
+          _count: {
+            select: { subscriptions: true, payments: true },
+          },
         },
-      });
-    }
+        orderBy: { createdAt: "desc" },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.user.count({ where }),
+    ]);
 
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "30d" });
-
-    res.status(200).json({
-      success: true,
-      message: "Guest user ready",
-      user: {
-        id: user.id,
-        phone: user.phone,
-        deviceId: user.deviceId,
-        isGuest: user.isGuest,
-      },
-      token,
-    });
+    return res.status(200).json({ success: true, total, data: users });
   } catch (error) {
-    next(error);
+    logger.error(`❌ listUsers: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to list users" });
   }
 };
 
-//  Register user (for regular users)
-export const registerUser = async (req, res, next) => {
+/**
+ * GET /api/users/:id
+ * Get full user profile with subscription & RADIUS info
+ */
+export const getUser = async (req, res) => {
   try {
-    const { phone, macAddress, password } = req.body;
+    const userId = Number(req.params.id);
 
-    if (!phone || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Phone and password are required" });
+    // Non-admin users can only view their own profile
+    if (req.user.role !== "ADMIN" && req.user.id !== userId) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { phone } });
-    if (existingUser) {
-      return res
-        .status(400)
-        .json({ success: false, message: "User already exists" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await prisma.user.create({
-      data: { phone, macAddress, password: hashedPassword, isGuest: false },
-    });
-
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
-
-    res.status(201).json({
-      success: true,
-      message: "User registered successfully",
-      user: {
-        id: user.id,
-        phone: user.phone,
-        macAddress: user.macAddress,
-        isGuest: user.isGuest,
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        subscriptions: {
+          include: { plan: true },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
+        payments: {
+          orderBy: { transactionDate: "desc" },
+          take: 5,
+        },
       },
-      token,
     });
-  } catch (error) {
-    next(error);
-  }
-};
 
-//  Login user
-export const loginUser = async (req, res, next) => {
-  try {
-    const { phone, password } = req.body;
-
-    if (!phone || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Phone and password are required" });
-    }
-
-    const user = await prisma.user.findUnique({ where: { phone } });
     if (!user) {
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
+    // Get RADIUS info if user has a username
+    let radiusInfo = null;
+    if (user.username) {
+      try {
+        const [sessions, usage] = await Promise.all([
+          RadiusManager.getActiveSessions(user.username),
+          RadiusManager.getUserDataUsage(user.username),
+        ]);
+        radiusInfo = { activeSessions: sessions.length, usage };
+      } catch {
+        // RADIUS might not have this user yet
+      }
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Login successful",
-      user: {
-        id: user.id,
-        phone: user.phone,
-        macAddress: user.macAddress,
-        isGuest: user.isGuest,
-        UserRole: user.role,
+      data: {
+        ...safeUser(user),
+        subscriptions: user.subscriptions,
+        recentPayments: user.payments,
+        radius: radiusInfo,
       },
-      token,
     });
   } catch (error) {
-    next(error);
+    logger.error(`❌ getUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get user" });
   }
 };
 
-//  Get User Profile
-export const getProfile = async (req, res, next) => {
+/**
+ * PATCH /api/users/:id
+ * Update user info (admin can update any, user can only update self)
+ */
+export const updateUser = async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: parseInt(req.params.id, 10) },
-      include: { subscriptions: true, payments: true },
+    const userId = Number(req.params.id);
+
+    if (req.user.role !== "ADMIN" && req.user.id !== userId) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const { phone, username, deviceName, password, status, role } = req.body;
+
+    // Only admins can change role or status
+    if ((status || role) && req.user.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can change status or role",
+      });
+    }
+
+    const updateData = {};
+    if (phone) updateData.phone = phone;
+    if (username) updateData.username = username;
+    if (deviceName) updateData.deviceName = deviceName;
+    if (status) updateData.status = status;
+    if (role) updateData.role = role;
+    if (password) updateData.password = await bcrypt.hash(password, 10);
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
     });
 
-    res.status(200).json({ success: true, user });
+    logger.info(`✏️ User updated: ${userId} by admin=${req.user.id}`);
+
+    return res.status(200).json({ success: true, data: safeUser(updated) });
   } catch (error) {
-    next(error);
+    logger.error(`❌ updateUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update user" });
   }
 };
 
-export const listUsers = async (req, res, next) => {
+/**
+ * POST /api/users/:id/block
+ * Admin: block a user and remove their RADIUS access
+ */
+export const blockUser = async (req, res) => {
   try {
-    const users = await prisma.user.findMany({
-      include: { subscriptions: true, payments: true },
+    const userId = Number(req.params.id);
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { status: "BLOCKED" },
     });
-    res.status(200).json({ success: true, users });
+
+    // Remove RADIUS access
+    if (user.username) {
+      await RadiusManager.deleteRadiusUser(user.username);
+      logger.info(
+        `🚫 RADIUS access removed for blocked user: ${user.username}`,
+      );
+    }
+
+    logger.info(`🔒 User blocked: ${userId}`);
+    return res
+      .status(200)
+      .json({ success: true, message: "User blocked and access removed" });
   } catch (error) {
-    next(error);
+    logger.error(`❌ blockUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to block user" });
+  }
+};
+
+/**
+ * POST /api/users/:id/unblock
+ * Admin: unblock a user
+ */
+export const unblockUser = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { status: "ACTIVE" },
+    });
+
+    logger.info(`🔓 User unblocked: ${userId}`);
+    return res.status(200).json({ success: true, message: "User unblocked" });
+  } catch (error) {
+    logger.error(`❌ unblockUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to unblock user" });
+  }
+};
+
+/**
+ * DELETE /api/users/:id
+ * Admin: delete user and all associated RADIUS data
+ */
+export const deleteUser = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Remove RADIUS access first
+    if (user.username) {
+      await RadiusManager.deleteRadiusUser(user.username);
+    }
+
+    // Delete user (cascade will handle subscriptions/payments via FK)
+    await prisma.user.delete({ where: { id: userId } });
+
+    logger.info(`🗑️ User deleted: ${userId}`);
+    return res.status(200).json({ success: true, message: "User deleted" });
+  } catch (error) {
+    logger.error(`❌ deleteUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to delete user" });
+  }
+};
+
+/**
+ * GET /api/users/:id/status
+ * Check a user's connection status (active subscription + RADIUS session)
+ * Used by the captive portal to verify access
+ */
+export const getUserStatus = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const subscription = await getActiveSubscription(userId);
+
+    let radiusSessions = [];
+    let device = null;
+    if (user.username) {
+      [radiusSessions, device] = await Promise.all([
+        RadiusManager.getActiveSessions(user.username),
+        RadiusManager.getActiveMacAddress(user.username),
+      ]);
+    }
+
+    const isConnected = subscription !== null && radiusSessions.length > 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        userId,
+        username: user.username,
+        status: user.status,
+        isConnected,
+        subscription: subscription
+          ? {
+              id: subscription.id,
+              plan: subscription.plan.name,
+              endTime: subscription.endTime,
+            }
+          : null,
+        activeSessions: radiusSessions.length,
+        device,
+      },
+    });
+  } catch (error) {
+    logger.error(`❌ getUserStatus: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get user status" });
   }
 };
