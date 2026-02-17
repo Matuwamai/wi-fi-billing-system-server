@@ -1,22 +1,30 @@
-// api/routes/subscriptionRoute.js
+// routes/subscription.routes.js
 import express from "express";
 import {
-  createSubscription,
-  getUserSubscriptions,
-  getAllSubscriptions,
-  checkAndExpireSubscriptions,
-} from "../controllers/subscription.js";
+  listSubscriptions,
+  getMySubscriptions,
+  getMyActiveSubscription,
+  getSubscription,
+  manualExpire,
+  runExpireStale,
+  getSubscriptionUsage,
+} from "../controllers/subscriptionController.js";
 import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();
-
-// User routes
-router.post("/", authenticate, createSubscription);
-router.get("/my", authenticate, getUserSubscriptions);
-router.get("/user", authenticate, getUserSubscriptions);
-router.get("/all", authenticate, authorizeRoles("ADMIN"), getAllSubscriptions);
-// Admin routes
-router.get("/", authenticate, authorizeRoles("ADMIN"), getAllSubscriptions);
-router.put("/check-expiry", authenticate, checkAndExpireSubscriptions);
+router.use(authenticate);
+// ─────────────────────────────────────────────
+// USER routes
+// ─────────────────────────────────────────────
+router.get("/my", getMySubscriptions);
+router.get("/my/active", getMyActiveSubscription);
+router.get("/:id", getSubscription);
+router.get("/:id/usage", getSubscriptionUsage);
+// ─────────────────────────────────────────────
+// ADMIN routes
+// ─────────────────────────────────────────────
+router.get("/", authorizeRoles("ADMIN"), listSubscriptions);
+router.post("/:id/expire", authorizeRoles("ADMIN"), manualExpire);
+router.post("/expire-stale", authorizeRoles("ADMIN"), runExpireStale);
 
 export default router;
