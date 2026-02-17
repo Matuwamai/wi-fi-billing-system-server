@@ -1,424 +1,419 @@
-// routes/auth.routes.js
-import express from "express";
+// controllers/authController.js
 import prisma from "../config/db.js";
-import { RouterSessionManager } from "../services/routerSessionService.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { getActiveSubscription } from "../services/subscriptionService.js";
+import { RadiusManager } from "../services/RadiusManager.js";
+import logger from "../utils/logger.js";
 
-const router = express.Router();
+const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+const JWT_EXPIRES = process.env.JWT_EXPIRES || "7d";
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
+const signToken = (user) =>
+  jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES,
+  });
+
+const safeUser = (user) => ({
+  id: user.id,
+  phone: user.phone,
+  username: user.username,
+  deviceName: user.deviceName,
+  role: user.role,
+  isGuest: user.isGuest,
+  status: user.status,
+});
 
 /**
- * Login with M-Pesa transaction code
- * POST /api/auth/login-mpesa
- * Body: { mpesaCode, macAddress, ipAddress?, deviceName? }
+ * Calculate human-readable remaining time from now until endTime
  */
-router.post("/login-mpesa", async (req, res) => {
-  try {
-    const { mpesaCode, macAddress, ipAddress, deviceName } = req.body;
+const remainingTimeText = (endTime) => {
+  const ms = new Date(endTime) - new Date();
+  if (ms <= 0) return "Expired";
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
 
-    // Validate input
-    if (!mpesaCode || !macAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "M-Pesa code and MAC address are required",
+// ─────────────────────────────────────────────
+// CONTROLLERS
+// ─────────────────────────────────────────────
+
+/**
+ * POST /api/auth/register
+ * Register a standard (non-guest) user with phone + password
+ */
+export const registerUser = async (req, res) => {
+  try {
+    const { phone, password, username, macAddress, deviceName } = req.body;
+
+    if (!phone || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone and password are required" });
+    }
+
+    const exists = await prisma.user.findUnique({ where: { phone } });
+    if (exists) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Phone number already registered" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        phone,
+        password: hashedPassword,
+        username: username || null,
+        macAddress: macAddress || null,
+        deviceName: deviceName || null,
+        isGuest: false,
+        status: "ACTIVE",
+        role: "USER",
+      },
+    });
+
+    const token = signToken(user);
+    logger.info(`✅ User registered: ${user.id} (${phone})`);
+
+    return res.status(201).json({
+      success: true,
+      message: "Registration successful",
+      token,
+      user: safeUser(user),
+    });
+  } catch (error) {
+    logger.error(`❌ registerUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Registration failed" });
+  }
+};
+
+/**
+ * POST /api/auth/login
+ * Login with username + password (used from captive portal)
+ * RADIUS handles the actual WiFi auth; this returns a JWT for the API
+ */
+export const loginUser = async (req, res) => {
+  try {
+    const { username, phone, password, macAddress, deviceName } = req.body;
+
+    if ((!username && !phone) || !password) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Username/phone and password are required",
+        });
+    }
+
+    // Find user by username or phone
+    const user = await prisma.user.findFirst({
+      where: username ? { username } : { phone },
+    });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    // Verify password (supports both bcrypt hashed and plain-text for legacy)
+    let passwordValid = false;
+    if (user.password?.startsWith("$2")) {
+      passwordValid = await bcrypt.compare(password, user.password);
+    } else {
+      passwordValid = user.password === password; // plain text (guest/auto-generated)
+    }
+
+    if (!passwordValid) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    if (user.status === "BLOCKED") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Account blocked. Contact support." });
+    }
+
+    // Update MAC / device info if provided
+    if (macAddress || deviceName) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          ...(macAddress && { macAddress }),
+          ...(deviceName && { deviceName }),
+          lastLogin: new Date(),
+        },
       });
     }
 
-    console.log(
-      `🔐 M-Pesa login attempt: Code=${mpesaCode}, MAC=${macAddress}`
-    );
+    // Fetch active subscription
+    const subscription = await getActiveSubscription(user.id);
 
-    // Find payment by M-Pesa code
+    const token = signToken(user);
+    logger.info(`✅ Login: user=${user.id} (${user.username || user.phone})`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: safeUser(user),
+      subscription: subscription
+        ? {
+            id: subscription.id,
+            plan: subscription.plan.name,
+            rateLimit: subscription.plan.rateLimit,
+            startTime: subscription.startTime,
+            endTime: subscription.endTime,
+            remainingTime: remainingTimeText(subscription.endTime),
+          }
+        : null,
+    });
+  } catch (error) {
+    logger.error(`❌ loginUser: ${error.message}`);
+    return res.status(500).json({ success: false, message: "Login failed" });
+  }
+};
+
+/**
+ * POST /api/auth/login-mpesa
+ * Login using an M-Pesa receipt code (no password needed)
+ * Used from the captive portal after a payment
+ */
+export const loginWithMpesa = async (req, res) => {
+  try {
+    const { mpesaCode, macAddress, deviceName, ipAddress } = req.body;
+
+    if (!mpesaCode || !macAddress) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "mpesaCode and macAddress are required",
+        });
+    }
+
+    // Find the successful payment
     const payment = await prisma.payment.findUnique({
       where: { mpesaCode: mpesaCode.toUpperCase() },
       include: {
         user: true,
         plan: true,
-        subscription: {
-          include: {
-            plan: true,
-          },
-        },
+        subscription: { include: { plan: true } },
       },
     });
 
     if (!payment) {
-      console.log("❌ Invalid M-Pesa code");
-      return res.status(404).json({
-        success: false,
-        message: "Invalid M-Pesa transaction code. Please check and try again.",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Invalid M-Pesa code" });
     }
 
-    // Check if payment was successful
     if (payment.status !== "SUCCESS") {
-      console.log(`❌ Payment not successful: Status=${payment.status}`);
-      return res.status(400).json({
-        success: false,
-        message: "This payment was not successful. Please make a new payment.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Payment was not successful" });
     }
 
-    // Get the subscription associated with this payment
-    const subscription = payment.subscription?.[0]; // Get first subscription from array
-
+    const subscription = payment.subscription?.[0];
     if (!subscription) {
-      console.log("❌ No subscription found for this payment");
-      return res.status(404).json({
-        success: false,
-        message: "No subscription found for this payment code.",
-      });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No subscription linked to this payment",
+        });
     }
 
-    // Check if subscription is still active and not expired
+    // Check subscription validity
     const now = new Date();
-    const subscriptionEndTime = new Date(subscription.endTime);
+    const endTime = new Date(subscription.endTime);
 
-    if (subscription.status === "EXPIRED" || subscriptionEndTime < now) {
-      console.log(`❌ Subscription expired: EndTime=${subscriptionEndTime}`);
-
-      // Update subscription status if not already marked expired
+    if (subscription.status === "EXPIRED" || endTime < now) {
+      // Auto-mark as expired if missed
       if (subscription.status !== "EXPIRED") {
         await prisma.subscription.update({
           where: { id: subscription.id },
           data: { status: "EXPIRED" },
         });
       }
-
       return res.status(400).json({
         success: false,
-        message: `Your subscription expired on ${subscriptionEndTime.toLocaleDateString()}. Please purchase a new plan to continue.`,
+        message: `Subscription expired on ${endTime.toLocaleDateString()}`,
         expired: true,
-        expiredAt: subscriptionEndTime,
+        expiredAt: endTime,
       });
     }
 
-    if (subscription.status === "CANCELLED") {
-      console.log("❌ Subscription cancelled");
-      return res.status(400).json({
-        success: false,
-        message:
-          "This subscription has been cancelled. Please purchase a new plan.",
-      });
-    }
-
-    // Check if subscription is active
     if (subscription.status !== "ACTIVE") {
-      console.log(`❌ Subscription not active: Status=${subscription.status}`);
-      return res.status(400).json({
-        success: false,
-        message: "This subscription is not active. Please contact support.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Subscription is not active" });
     }
 
-    // Update user's MAC address if different
-    if (payment.user.macAddress !== macAddress) {
-      console.log(
-        `📝 Updating user MAC address: ${payment.user.macAddress} → ${macAddress}`
-      );
+    // Update MAC address on user record
+    if (macAddress || deviceName) {
       await prisma.user.update({
         where: { id: payment.user.id },
         data: {
-          macAddress,
+          ...(macAddress && { macAddress }),
           ...(deviceName && { deviceName }),
+          lastLogin: new Date(),
         },
       });
     }
 
-    // End any existing active sessions for this user (disconnect old device)
-    console.log("🔄 Checking for existing active sessions...");
-    const existingSessions = await prisma.routerSession.findMany({
-      where: {
-        userId: payment.user.id,
-        status: "ACTIVE",
-        endedAt: null,
-      },
+    // Verify RADIUS user still exists & is provisioned
+    const radiusCheck = await prisma.radCheck.findFirst({
+      where: { username: payment.user.username },
     });
 
-    if (existingSessions.length > 0) {
-      console.log(
-        `🛑 Found ${existingSessions.length} active session(s), ending them...`
+    if (!radiusCheck) {
+      logger.warn(
+        `⚠️ RADIUS user missing for ${payment.user.username} — re-provisioning`,
       );
-      for (const session of existingSessions) {
-        try {
-          await RouterSessionManager.end({ userId: payment.user.id });
-          console.log(`✅ Ended session ${session.id}`);
-        } catch (endError) {
-          console.error(
-            `⚠️  Failed to end session ${session.id}:`,
-            endError.message
-          );
-        }
-      }
-    }
-
-    // Start new router session on the new device
-    console.log("🚀 Starting new router session...");
-    let session;
-    try {
-      session = await RouterSessionManager.startAutomatic({
-        subscriptionId: subscription.id,
-        macAddress,
-        ipAddress,
-      });
-      console.log(`✅ Session started: ${session.id}`);
-    } catch (sessionError) {
-      console.error("❌ Failed to start router session:", sessionError.message);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to connect to router: ${sessionError.message}`,
-      });
-    }
-
-    // Calculate remaining time
-    const remainingMs = subscriptionEndTime - now;
-    const remainingDays = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
-    const remainingHours = Math.floor(
-      (remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-    );
-    const remainingMinutes = Math.floor(
-      (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
-    );
-
-    let remainingTimeText = "";
-    if (remainingDays > 0) {
-      remainingTimeText = `${remainingDays} day${
-        remainingDays > 1 ? "s" : ""
-      } ${remainingHours} hour${remainingHours !== 1 ? "s" : ""}`;
-    } else if (remainingHours > 0) {
-      remainingTimeText = `${remainingHours} hour${
-        remainingHours !== 1 ? "s" : ""
-      } ${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`;
-    } else {
-      remainingTimeText = `${remainingMinutes} minute${
-        remainingMinutes !== 1 ? "s" : ""
-      }`;
-    }
-
-    console.log(`✅ Login successful for user ${payment.user.id}`);
-
-    // Return success with user and subscription info
-    res.json({
-      success: true,
-      message: "Login successful! You are now connected to the internet.",
-      user: {
-        id: payment.user.id,
-        phone: payment.user.phone,
+      await RadiusManager.createRadiusUser({
         username: payment.user.username,
-        macAddress: payment.user.macAddress,
-      },
+        password: payment.user.password,
+        planProfile: { rateLimit: subscription.plan.rateLimit || "10M/10M" },
+      });
+    }
+
+    const token = signToken(payment.user);
+    logger.info(`✅ M-Pesa login: user=${payment.user.id}, code=${mpesaCode}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful! You are now connected.",
+      token,
+      user: safeUser(payment.user),
       subscription: {
         id: subscription.id,
         plan: subscription.plan.name,
+        rateLimit: subscription.plan.rateLimit,
         startTime: subscription.startTime,
         endTime: subscription.endTime,
-        remainingTime: remainingTimeText,
+        remainingTime: remainingTimeText(subscription.endTime),
       },
-      session: {
-        id: session.id,
-        startedAt: session.startedAt,
+      // MikroTik will use these credentials for RADIUS auth
+      radiusCredentials: {
+        username: payment.user.username,
+        password: payment.user.password,
       },
     });
   } catch (error) {
-    console.error("❌ M-Pesa login error:", error);
-    res.status(500).json({
-      success: false,
-      message:
-        error.message || "An error occurred during login. Please try again.",
-    });
+    logger.error(`❌ loginWithMpesa: ${error.message}`);
+    return res.status(500).json({ success: false, message: "Login failed" });
   }
-});
+};
 
 /**
- * Login with username and password
- * POST /api/auth/login
- * Body: { username, password, macAddress, ipAddress?, deviceName? }
+ * POST /api/auth/guest
+ * Create or retrieve a guest user by device info
+ * Used for voucher redemption or trial access
  */
-router.post("/login", async (req, res) => {
+export const createGuestUser = async (req, res) => {
   try {
-    const { username, password, macAddress, ipAddress, deviceName } = req.body;
+    const { deviceName, phone } = req.body;
 
-    // Validate input
-    if (!username || !password || !macAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "Username, password, and MAC address are required",
+    if (!deviceName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "deviceName is required" });
+    }
+
+    // Try to find existing guest by phone or deviceName
+    let user = null;
+    if (phone) {
+      user = await prisma.user.findUnique({ where: { phone } });
+    }
+    if (!user) {
+      user = await prisma.user.findFirst({
+        where: { deviceName, isGuest: true },
       });
     }
 
-    console.log(`🔐 Username login attempt: ${username}, MAC=${macAddress}`);
+    if (!user) {
+      const password = Math.random().toString(36).substring(2, 10);
+      const username = `guest_${Date.now().toString(36)}`;
+      user = await prisma.user.create({
+        data: {
+          phone: phone || null,
+          username,
+          password,
+          deviceName,
+          isGuest: true,
+          status: "ACTIVE",
+          role: "USER",
+        },
+      });
+      logger.info(`✅ Guest user created: ${user.id} (${username})`);
+    }
 
-    // Find user by username
+    const token = signToken(user);
+
+    return res.status(200).json({
+      success: true,
+      message: "Guest user ready",
+      token,
+      user: safeUser(user),
+    });
+  } catch (error) {
+    logger.error(`❌ createGuestUser: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to create guest user" });
+  }
+};
+
+/**
+ * GET /api/auth/me
+ * Get the currently authenticated user (requires JWT)
+ */
+export const getMe = async (req, res) => {
+  try {
     const user = await prisma.user.findUnique({
-      where: { username },
+      where: { id: req.user.id },
     });
 
     if (!user) {
-      console.log("❌ User not found");
-      return res.status(404).json({
-        success: false,
-        message: "Invalid username or password",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
-    // Check password (plain text comparison - you should use bcrypt in production)
-    if (user.password !== password) {
-      console.log("❌ Invalid password");
-      return res.status(401).json({
-        success: false,
-        message: "Invalid username or password",
-      });
-    }
+    const subscription = await getActiveSubscription(user.id);
 
-    // Check if user is blocked
-    if (user.status === "BLOCKED") {
-      console.log("❌ User is blocked");
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been blocked. Please contact support.",
-      });
-    }
-
-    // Find active subscription
-    const activeSubscription = await prisma.subscription.findFirst({
-      where: {
-        userId: user.id,
-        status: "ACTIVE",
-        endTime: { gt: new Date() },
-      },
-      include: {
-        plan: true,
-      },
-      orderBy: {
-        endTime: "desc", // Get the subscription with the latest end time
-      },
-    });
-
-    if (!activeSubscription) {
-      console.log("❌ No active subscription");
-      return res.status(400).json({
-        success: false,
-        message:
-          "You don't have an active subscription. Please purchase a plan to continue.",
-        noSubscription: true,
-      });
-    }
-
-    // Update user's MAC address if different
-    if (user.macAddress !== macAddress) {
-      console.log(
-        `📝 Updating user MAC address: ${user.macAddress} → ${macAddress}`
-      );
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          macAddress,
-          ...(deviceName && { deviceName }),
-        },
-      });
-    }
-
-    // End any existing active sessions (disconnect old device)
-    console.log("🔄 Checking for existing active sessions...");
-    const existingSessions = await prisma.routerSession.findMany({
-      where: {
-        userId: user.id,
-        status: "ACTIVE",
-        endedAt: null,
-      },
-    });
-
-    if (existingSessions.length > 0) {
-      console.log(
-        `🛑 Found ${existingSessions.length} active session(s), ending them...`
-      );
-      for (const session of existingSessions) {
-        try {
-          await RouterSessionManager.end({ userId: user.id });
-          console.log(`✅ Ended session ${session.id}`);
-        } catch (endError) {
-          console.error(
-            `⚠️  Failed to end session ${session.id}:`,
-            endError.message
-          );
-        }
-      }
-    }
-
-    // Start new router session
-    console.log("🚀 Starting new router session...");
-    let session;
-    try {
-      session = await RouterSessionManager.startAutomatic({
-        subscriptionId: activeSubscription.id,
-        macAddress,
-        ipAddress,
-      });
-      console.log(`✅ Session started: ${session.id}`);
-    } catch (sessionError) {
-      console.error("❌ Failed to start router session:", sessionError.message);
-      return res.status(500).json({
-        success: false,
-        message: `Failed to connect to router: ${sessionError.message}`,
-      });
-    }
-
-    // Calculate remaining time
-    const now = new Date();
-    const subscriptionEndTime = new Date(activeSubscription.endTime);
-    const remainingMs = subscriptionEndTime - now;
-    const remainingDays = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
-    const remainingHours = Math.floor(
-      (remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-    );
-    const remainingMinutes = Math.floor(
-      (remainingMs % (1000 * 60 * 60)) / (1000 * 60)
-    );
-
-    let remainingTimeText = "";
-    if (remainingDays > 0) {
-      remainingTimeText = `${remainingDays} day${
-        remainingDays > 1 ? "s" : ""
-      } ${remainingHours} hour${remainingHours !== 1 ? "s" : ""}`;
-    } else if (remainingHours > 0) {
-      remainingTimeText = `${remainingHours} hour${
-        remainingHours !== 1 ? "s" : ""
-      } ${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`;
-    } else {
-      remainingTimeText = `${remainingMinutes} minute${
-        remainingMinutes !== 1 ? "s" : ""
-      }`;
-    }
-
-    console.log(`✅ Login successful for user ${user.id}`);
-
-    res.json({
+    return res.status(200).json({
       success: true,
-      message: "Login successful! You are now connected to the internet.",
-      user: {
-        id: user.id,
-        phone: user.phone,
-        username: user.username,
-        macAddress: user.macAddress,
-      },
-      subscription: {
-        id: activeSubscription.id,
-        plan: activeSubscription.plan.name,
-        startTime: activeSubscription.startTime,
-        endTime: activeSubscription.endTime,
-        remainingTime: remainingTimeText,
-      },
-      session: {
-        id: session.id,
-        startedAt: session.startedAt,
-      },
+      user: safeUser(user),
+      subscription: subscription
+        ? {
+            id: subscription.id,
+            plan: subscription.plan.name,
+            rateLimit: subscription.plan.rateLimit,
+            endTime: subscription.endTime,
+            remainingTime: remainingTimeText(subscription.endTime),
+          }
+        : null,
     });
   } catch (error) {
-    console.error("❌ Username login error:", error);
-    res.status(500).json({
-      success: false,
-      message:
-        error.message || "An error occurred during login. Please try again.",
-    });
+    logger.error(`❌ getMe: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get profile" });
   }
-});
-
-export default router;
+};
