@@ -1,16 +1,26 @@
+// routes/payment.routes.js
 import express from "express";
 import {
   startPayment,
   handleCallback,
-  getPaymentDetails,
   listPayments,
-} from "../controllers/mpesa.js";
+  getPaymentDetails,
+  checkPaymentStatus,
+} from "../controllers/paymentController.js";
 import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();
-
-router.post("/pay", startPayment);
+// ─────────────────────────────────────────────
+// PUBLIC
+// ─────────────────────────────────────────────
+router.post("/initiate", startPayment);
 router.post("/callback", handleCallback);
+router.get("/status/:checkoutRequestId", checkPaymentStatus);
+
+// ─────────────────────────────────────────────
+// ADMIN ONLY
+// ─────────────────────────────────────────────
+
 router.get("/", authenticate, authorizeRoles("ADMIN"), listPayments);
 router.get("/:id", authenticate, authorizeRoles("ADMIN"), getPaymentDetails);
 
