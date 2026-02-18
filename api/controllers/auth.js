@@ -99,7 +99,53 @@ export const registerUser = async (req, res) => {
   }
 };
 
+
+
+/** * PUT /api/auth/login/admin
+ * Admin: login with phone + password (for admin panel access)
+ */
+export const loginAdmin = async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+
+    if (!phone || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone and password are required" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { phone } });
+
+    if (!user || user.role !== "ADMIN") {
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin account not found" });
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.password);
+    if (!passwordValid) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    const token = signToken(user);
+    logger.info(`✅ Admin login: user=${user.id} (${phone})`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: safeUser(user),
+    });
+  } catch (error) {
+    logger.error(`❌ loginAdmin: ${error.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Login failed" });
+  }
 /**
+ * 
  * POST /api/auth/login
  * Login with username + password (used from captive portal)
  * RADIUS handles the actual WiFi auth; this returns a JWT for the API
