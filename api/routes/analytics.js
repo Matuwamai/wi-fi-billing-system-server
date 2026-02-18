@@ -7,7 +7,6 @@ import {
   getUserGrowth,
   getTopPlans,
   getPaymentMethodsAnalytics,
-  getUserDeviceStats,
 } from "../controllers/analytics.js";
 import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
@@ -33,8 +32,5 @@ router.get("/top-plans", getTopPlans);
 
 // Payment methods analytics
 router.get("/payment-methods", getPaymentMethodsAnalytics);
-
-// User device statistics
-router.get("/device-stats", getUserDeviceStats);
 
 export default router;

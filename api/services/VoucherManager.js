@@ -1,9 +1,7 @@
 // services/VoucherManager.js
 import prisma from "../config/db.js";
 import RadiusManager from "./RadiusManager.js";
-import crypto from "crypto";
 import { addHours, addDays, addWeeks, addMonths } from "date-fns";
-import { RouterSessionManager } from "./routerSessionService.js";
 
 // Helper to generate unique voucher code
 const generateVoucherCode = () => {
@@ -260,51 +258,4 @@ function getPlanProfile(plan) {
   };
 
   return profiles[plan.name] || { rateLimit: "10M/10M", sessionTimeout: null };
-}
-
-// Helper: Calculate end time
-function calculateEndTime(durationType, durationValue) {
-  const now = new Date();
-
-  switch (durationType) {
-    case "MINUTE":
-      return new Date(now.getTime() + durationValue * 60 * 1000);
-    case "HOUR":
-      return new Date(now.getTime() + durationValue * 60 * 60 * 1000);
-    case "DAY":
-      return new Date(now.getTime() + durationValue * 24 * 60 * 60 * 1000);
-    case "WEEK":
-      return new Date(now.getTime() + durationValue * 7 * 24 * 60 * 60 * 1000);
-    case "MONTH":
-      const endDate = new Date(now);
-      endDate.setMonth(endDate.getMonth() + durationValue);
-      return endDate;
-    default:
-      return new Date(now.getTime() + durationValue * 24 * 60 * 60 * 1000);
-  }
-}
-
-function generateRandomPassword(length = 8) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  return Array.from(
-    { length },
-    () => chars[Math.floor(Math.random() * chars.length)],
-  ).join("");
-}
-
-async function sendCredentialsSMS(phone, credentials) {
-  const message = `
-WiFi Access Activated!
-
-Username: ${credentials.username}
-Password: ${credentials.password}
-
-Plan: ${credentials.plan}
-Valid until: ${credentials.expiryDate.toLocaleDateString()}
-
-Connect to WiFi, open browser, and login. Enjoy!
-  `.trim();
-
-  console.log(`📱 SMS to ${phone}:`, message);
-  // TODO: Integrate SMS provider
 }

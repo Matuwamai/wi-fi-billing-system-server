@@ -7,7 +7,6 @@ import userRoutes from "./routes/user.js";
 import subscriptionRoutes from "./routes/subscription.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import mpeasaRoutes from "./routes/mpesa.js";
-import routerSessionRoutes from "./routes/routerSession.js";
 import voucherRouetes from "./routes/voucher.js";
 import autRoutes from "./routes/auth.js";
 import analyticRoute from "./routes/analytics.js";
@@ -30,7 +29,6 @@ app.use((req, res, next) => {
 app.use("/api/plans", planRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
-app.use("/api/session", routerSessionRoutes);
 app.use("/api/mpesa", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);
 app.use("/api/auth", autRoutes);

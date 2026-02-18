@@ -8,7 +8,7 @@ import {
   manualExpire,
   runExpireStale,
   getSubscriptionUsage,
-} from "../controllers/subscriptionController.js";
+} from "../controllers/subscription.js";
 import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();

@@ -6,7 +6,7 @@ import {
   listPayments,
   getPaymentDetails,
   checkPaymentStatus,
-} from "../controllers/paymentController.js";
+} from "../controllers/mpesa.js";
 import { authenticate, authorizeRoles } from "../middlewares/auth.js";
 
 const router = express.Router();
