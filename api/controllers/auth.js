@@ -99,8 +99,6 @@ export const registerUser = async (req, res) => {
   }
 };
 
-
-
 /** * PUT /api/auth/login/admin
  * Admin: login with phone + password (for admin panel access)
  */
@@ -140,15 +138,13 @@ export const loginAdmin = async (req, res) => {
     });
   } catch (error) {
     logger.error(`❌ loginAdmin: ${error.message}`);
-    return res
-      .status(500)
-      .json({ success: false, message: "Login failed" });
+    return res.status(500).json({ success: false, message: "Login failed" });
   }
+};
+
 /**
- * 
  * POST /api/auth/login
- * Login with username + password (used from captive portal)
- * RADIUS handles the actual WiFi auth; this returns a JWT for the API
+ * Login with phone/username + password
  */
 export const loginUser = async (req, res) => {
   try {
