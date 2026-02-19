@@ -29,7 +29,7 @@ app.use((req, res, next) => {
 app.use("/api/plans", planRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
-app.use("/api/mpesa", mpeasaRoutes);
+app.use("/api/payments", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);
 app.use("/api/auth", autRoutes);
 app.use("/api/analytics", analyticRoute);
