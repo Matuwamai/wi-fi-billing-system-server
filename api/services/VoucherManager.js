@@ -81,6 +81,212 @@ Enjoy your internet!
 }
 
 export const VoucherManager = {
+  // services/VoucherManager.js
+
+  // ... existing methods (redeemVoucher, expireSubscription) ...
+
+  /**
+   * Create new vouchers
+   */
+  createVoucher: async ({ planId, quantity, expiresInDays, adminId }) => {
+    try {
+      const plan = await prisma.plan.findUnique({
+        where: { id: planId },
+      });
+
+      if (!plan) {
+        throw new Error("Plan not found");
+      }
+
+      const vouchers = [];
+      const expiresAt = addDays(new Date(), expiresInDays);
+
+      for (let i = 0; i < quantity; i++) {
+        const code = generateVoucherCode();
+
+        // Ensure code is unique
+        let existing = await prisma.voucher.findUnique({ where: { code } });
+        while (existing) {
+          code = generateVoucherCode();
+          existing = await prisma.voucher.findUnique({ where: { code } });
+        }
+
+        const voucher = await prisma.voucher.create({
+          data: {
+            code,
+            planId,
+            expiresAt,
+            status: "UNUSED",
+            createdBy: adminId,
+          },
+          include: { plan: true },
+        });
+
+        vouchers.push(voucher);
+      }
+
+      return vouchers;
+    } catch (error) {
+      console.error("❌ Create voucher error:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Check voucher validity
+   */
+  checkVoucher: async (code) => {
+    try {
+      const voucher = await prisma.voucher.findUnique({
+        where: { code },
+        include: { plan: true },
+      });
+
+      if (!voucher) {
+        return {
+          success: false,
+          message: "Invalid voucher code",
+          valid: false,
+        };
+      }
+
+      const now = new Date();
+      let valid = true;
+      let message = "Voucher is valid";
+
+      if (voucher.status === "USED") {
+        valid = false;
+        message = "Voucher has already been used";
+      } else if (voucher.status === "EXPIRED" || now > voucher.expiresAt) {
+        valid = false;
+        message = "Voucher has expired";
+      }
+
+      return {
+        success: valid,
+        valid,
+        message,
+        voucher: valid
+          ? {
+              code: voucher.code,
+              plan: voucher.plan.name,
+              expiresAt: voucher.expiresAt,
+              status: voucher.status,
+            }
+          : null,
+      };
+    } catch (error) {
+      console.error("❌ Check voucher error:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * List vouchers with filtering and pagination
+   */
+  listVouchers: async ({ status, planId, page = 1, limit = 50 }) => {
+    try {
+      const where = {};
+
+      if (status) {
+        where.status = status;
+      }
+
+      if (planId) {
+        where.planId = planId;
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [vouchers, total] = await Promise.all([
+        prisma.voucher.findMany({
+          where,
+          include: {
+            plan: true,
+            user: {
+              select: { id: true, username: true, phone: true },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+        prisma.voucher.count({ where }),
+      ]);
+
+      return {
+        vouchers,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      console.error("❌ List vouchers error:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Delete a voucher
+   */
+  deleteVoucher: async (id) => {
+    try {
+      const voucher = await prisma.voucher.findUnique({
+        where: { id },
+      });
+
+      if (!voucher) {
+        throw new Error("Voucher not found");
+      }
+
+      if (voucher.status === "USED") {
+        throw new Error("Cannot delete a used voucher");
+      }
+
+      await prisma.voucher.delete({
+        where: { id },
+      });
+
+      return {
+        success: true,
+        message: "Voucher deleted successfully",
+      };
+    } catch (error) {
+      console.error("❌ Delete voucher error:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Manually expire old vouchers
+   */
+  expireVouchers: async () => {
+    try {
+      const now = new Date();
+
+      const result = await prisma.voucher.updateMany({
+        where: {
+          status: "UNUSED",
+          expiresAt: { lt: now },
+        },
+        data: {
+          status: "EXPIRED",
+        },
+      });
+
+      return {
+        success: true,
+        count: result.count,
+      };
+    } catch (error) {
+      console.error("❌ Expire vouchers error:", error);
+      throw error;
+    }
+  },
+
   /**
    * Redeem voucher - Now creates RADIUS user instead of sync
    */

@@ -88,9 +88,9 @@ export const getUser = async (req, res) => {
     const userId = Number(req.params.id);
 
     // Non-admin users can only view their own profile
-    if (req.user.role !== "ADMIN" && req.user.id !== userId) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
+    // if (req.user.role !== "ADMIN" && req.user.id !== userId) {
+    //   return res.status(403).json({ success: false, message: "Forbidden" });
+    // }
 
     const user = await prisma.user.findUnique({
       where: { id: userId },

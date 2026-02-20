@@ -27,7 +27,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/api/plans", planRoutes);
-app.use("/api/user", userRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/payments", mpeasaRoutes);
 app.use("/api/vouchers", voucherRouetes);

@@ -9,3 +9,5 @@ Invalid `prisma.user.update()` invocation:
 
 Unique constraint failed on the constraint: `User_macAddress_key`
 [2026-01-04 09:43:55] error: Callback error: Cannot set headers after they are sent to the client
+[2026-02-20 11:33:50] error: ❌ getUser: Cannot read properties of undefined (reading 'role')
+[2026-02-20 11:35:41] error: ❌ getUser: Cannot read properties of undefined (reading 'role')
