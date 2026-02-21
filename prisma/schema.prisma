@@ -18,7 +18,8 @@ model User {
   username      String?        @unique
   password      String?
   deviceName    String?
-  role          String?        @default("USER")
+  macAddress    String?        @unique
+  role          UserRole       @default(USER)
   isGuest       Boolean        @default(false)
   status        UserStatus     @default(ACTIVE)
   lastLogin     DateTime?
