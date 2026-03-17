@@ -2,7 +2,7 @@
 import express from "express";
 import {
   startPayment,
-  handleCallback,
+  handlePaystackWebhook,
   listPayments,
   getPaymentDetails,
   checkPaymentStatus,
@@ -14,7 +14,7 @@ const router = express.Router();
 // PUBLIC
 // ─────────────────────────────────────────────
 router.post("/initiate", startPayment);
-router.post("/callback", handleCallback);
+router.post("/callback", handlePaystackWebhook);
 router.get("/status/:checkoutRequestId", checkPaymentStatus);
 
 // ─────────────────────────────────────────────

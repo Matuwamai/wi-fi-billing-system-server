@@ -11,3 +11,104 @@ Unique constraint failed on the constraint: `User_macAddress_key`
 [2026-01-04 09:43:55] error: Callback error: Cannot set headers after they are sent to the client
 [2026-02-20 11:33:50] error: ❌ getUser: Cannot read properties of undefined (reading 'role')
 [2026-02-20 11:35:41] error: ❌ getUser: Cannot read properties of undefined (reading 'role')
+[2026-03-14 17:40:29] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 17:40:37] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 17:49:42] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 17:50:24] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 17:52:35] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 17:55:51] error: 
+Invalid `prisma.payment.create()` invocation:
+
+{
+  data: {
+    userId: 30,
+    planId: 22,
+    amount: 1,
+    method: "PAYSTACK",
+            ~~~~~~~~~~
+    status: "PENDING"
+  }
+}
+
+Invalid value for argument `method`. Expected PaymentMethod.
+[2026-03-14 18:07:54] error: 
+Invalid `prisma.payment.create()` invocation:
+
+
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(Server(MysqlError { code: 1265, message: "Data truncated for column 'method' at row 1", state: "01000" })), transient: false })
+[2026-03-14 18:11:56] error: Paystack initialization failed
+[2026-03-14 18:13:43] error: Paystack initialization failed
+[2026-03-14 18:29:43] error: Paystack initialization failed
+[2026-03-14 18:36:38] error: Paystack initialization failed
+[2026-03-14 18:40:25] error: Paystack initialization failed

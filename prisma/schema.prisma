@@ -246,6 +246,7 @@ enum PaymentStatus {
 
 enum PaymentMethod {
   MPESA
+  PAYSTACK
   CASH
   CARD
 }
