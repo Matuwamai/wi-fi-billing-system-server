@@ -73,6 +73,8 @@ model Payment {
   callbackData      Json?
   checkoutRequestId String?        @unique
   merchantRequestId String?        @unique
+  reference         String?        @unique
+  paystackRef       String?
   planId            Int?
   plan              Plan?          @relation(fields: [planId], references: [id])
   user              User           @relation(fields: [userId], references: [id])
