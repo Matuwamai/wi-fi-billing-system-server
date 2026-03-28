@@ -4,7 +4,7 @@ import prisma from "../config/db.js";
 import { createSubscriptionForPayment } from "../services/subscriptionService.js";
 import logger from "../utils/logger.js";
 
-const PAYSTACK_SECRET = process.env.PAY_STACK_CALLBACK_URL;
+const PAYSTACK_SECRET = process.env.PAY_STACK_SCRETE_KEY;
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -80,6 +80,7 @@ export const startPayment = async (req, res) => {
       deviceHostname,
       suggestedUsername,
     } = req.body;
+    console.log("Received payment initiation:", req.body);
 
     if (!planId) {
       return res.status(400).json({
@@ -135,7 +136,7 @@ export const startPayment = async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: `${user.username}@wifi.local`,
+          email: `user${user.id}@wifi.neliteitsolution.com`,
           amount: plan.price * 100, // Paystack uses kobo/cents
           reference: `WIFI-${payment.id}`,
           callback_url: `${process.env.PAY_STACK_CALLBACK_URL}/payment-success`,
@@ -149,9 +150,10 @@ export const startPayment = async (req, res) => {
     );
 
     const data = await response.json();
+    console.log("Paystack response:", data);
 
     if (!data.status) {
-      throw new Error("Paystack initialization failed");
+      throw new Error(data.message || "Paystack initialization failed");
     }
 
     await prisma.payment.update({
