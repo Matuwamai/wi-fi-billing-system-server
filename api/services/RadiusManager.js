@@ -1,5 +1,6 @@
 // services/RadiusManager.js
 import { PrismaClient } from "@prisma/client";
+import MikroTikService from "./MikroTikService.js";
 const prisma = new PrismaClient();
 
 export const RadiusManager = {
@@ -28,6 +29,12 @@ export const RadiusManager = {
           value: planProfile.rateLimit || "10M/10M", // e.g., "5M/5M" for 5Mbps
         },
       });
+      await MikroTikService.addHotspotUser(
+        username,
+        password,
+        macAddress, // Get from request
+        planDuration, // e.g., '1h', '24h'
+      );
 
       // Optional: Session timeout
       if (planProfile.sessionTimeout) {

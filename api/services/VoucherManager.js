@@ -2,6 +2,7 @@
 import prisma from "../config/db.js";
 import RadiusManager from "./RadiusManager.js";
 import { addHours, addDays, addWeeks, addMonths } from "date-fns";
+import MikroTikService from "./MikroTikService.js";
 
 // Helper to generate unique voucher code
 const generateVoucherCode = () => {
@@ -390,6 +391,12 @@ export const VoucherManager = {
           expiryDate: endTime,
         });
       }
+      await MikroTikService.addHotspotUser(
+        username,
+        password,
+        macAddress, // Get from request
+        planDuration, // e.g., '1h', '24h'
+      );
 
       return {
         success: true,
