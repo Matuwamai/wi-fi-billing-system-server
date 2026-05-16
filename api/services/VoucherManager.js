@@ -414,6 +414,9 @@ export const VoucherManager = {
           note: "Your device will be automatically recognized on login",
         },
       };
+      console.log(
+        `✅ User: ${user.username} password: ${user.password}, Plan: ${plan.name}`,
+      );
     } catch (error) {
       console.error("❌ Voucher redemption error:", error.message);
       throw error;
